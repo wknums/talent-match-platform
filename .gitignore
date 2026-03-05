@@ -1,0 +1,48 @@
+# ── Env ───────────────────────────────────────────
+.env
+.env.*
+.env_*
+!.env.example
+
+# ── Python ────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+
+# ── Terraform ─────────────────────────────────────
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+terraform.tfvars
+!terraform.tfvars.example
+
+# ── IDE / OS ──────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+Thumbs.db
+.DS_Store
+
+# ── Docker ────────────────────────────────────────
+docker-compose.override.yml
+
+# ── Coverage / test ───────────────────────────────
+htmlcov/
+.coverage
+.pytest_cache/
+.mypy_cache/

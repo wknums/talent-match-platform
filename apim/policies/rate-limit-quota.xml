@@ -1,0 +1,29 @@
+<!-- APIM policy: rate-limit + quota enforcement -->
+<policies>
+    <inbound>
+        <base />
+        <!-- Correlation-ID pass-through / generation -->
+        <set-header name="X-Correlation-Id" exists-action="skip">
+            <value>@(context.RequestId.ToString())</value>
+        </set-header>
+
+        <!-- Rate limiting: 100 calls per 60 seconds per subscription -->
+        <rate-limit calls="100" renewal-period="60" />
+
+        <!-- Quota: 10 000 calls per day per subscription -->
+        <quota calls="10000" renewal-period="86400" />
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+        <!-- Forward correlation-id to client -->
+        <set-header name="X-Correlation-Id" exists-action="override">
+            <value>@(context.Variables.GetValueOrDefault<string>("correlationId", context.RequestId.ToString()))</value>
+        </set-header>
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>

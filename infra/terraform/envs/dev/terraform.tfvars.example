@@ -1,0 +1,57 @@
+# ── Example tfvars for dev ────────────────────────────────────────────────────
+# Copy to terraform.tfvars and fill in values.
+
+project             = "awr"
+environment         = "dev"
+location            = "eastus2"
+tenant_id           = "<your-tenant-id>"
+aad_admin_object_id = "<sql-aad-admin-object-id>"
+publisher_email     = "platform-team@example.com"
+
+host_choice           = "webapp_container"
+use_private_endpoints = false
+enable_artifact_storage = false
+
+sql_sku         = "S0"
+sql_max_size_gb = 2
+apim_sku        = "Developer_1"
+app_service_sku = "B1"
+functions_sku   = "Y1"
+service_bus_sku = "Standard"
+sb_queue_name   = "engine-runs"
+
+container_image = "ghcr.io/placeholder/awr-platform-api:latest"
+
+tags = {
+  team = "platform"
+}
+
+# ── Resource Reuse (set to true + provide names to reuse existing resources) ──
+reuse_storage      = false
+reuse_appinsights  = false
+reuse_service_bus  = false
+reuse_sql          = false
+reuse_key_vault    = false
+reuse_apim         = false
+reuse_loganalytics = false
+reuse_identities   = false
+
+# When reuse_* = true, uncomment and fill in the existing resource details:
+# existing_storage_name     = "ststorageshared"
+# existing_storage_rg       = "rg-shared"
+# existing_appinsights_name = "appi-shared"
+# existing_appinsights_rg   = "rg-shared"
+# existing_service_bus_name = "sb-shared"
+# existing_service_bus_rg   = "rg-shared"
+# existing_sql_server_name  = "sql-shared"
+# existing_sql_db_name      = "awrdb"
+# existing_sql_rg           = "rg-shared"
+# existing_key_vault_name   = "kv-shared"
+# existing_key_vault_rg     = "rg-shared"
+# existing_apim_name        = "apim-shared"
+# existing_apim_rg          = "rg-shared"
+# existing_loganalytics_name = "law-shared"
+# existing_loganalytics_rg   = "rg-shared"
+# existing_identities_api_name  = "id-shared-api"
+# existing_identities_func_name = "id-shared-func"
+# existing_identities_rg        = "rg-shared"
