@@ -1,0 +1,22 @@
+<!-- APIM policy: correlation-id injection / pass-through -->
+<policies>
+    <inbound>
+        <base />
+        <set-header name="X-Correlation-Id" exists-action="skip">
+            <value>@(context.RequestId.ToString())</value>
+        </set-header>
+        <set-variable name="correlationId" value="@(context.Request.Headers.GetValueOrDefault("X-Correlation-Id", context.RequestId.ToString()))" />
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+        <set-header name="X-Correlation-Id" exists-action="override">
+            <value>@((string)context.Variables["correlationId"])</value>
+        </set-header>
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>

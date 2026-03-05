@@ -1,0 +1,17 @@
+<!-- APIM policy: redact sensitive headers / fields from logs -->
+<policies>
+    <inbound>
+        <base />
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+        <!-- Remove Authorization header from diagnostic logs -->
+        <set-header name="Authorization" exists-action="delete" />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>
