@@ -1,0 +1,57 @@
+# Git
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment
+.env
+.env.*
+.env_*
+!.env.example
+
+# Terraform
+infra/
+**/.terraform/
+*.tfstate*
+*.tfplan
+
+# Docker
+Dockerfile*
+.dockerignore
+docker-compose*.yml
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Specs / Docs
+specs/
+docs/
+*.md
+LICENSE
+
+# CI/CD
+.github/
+
+# APIM policies
+apim/
+
+# Logs
+*.log

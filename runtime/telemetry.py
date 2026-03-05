@@ -51,7 +51,7 @@ def setup_telemetry(*, service_name: str, otlp_endpoint: str) -> None:
     trace.set_tracer_provider(provider)
 
     # Instrument FastAPI (auto-injects span context on each request)
-    FastAPIInstrumentor.instrument()
+    FastAPIInstrumentor().instrument()
 
     # Configure structured JSON logging
     _configure_json_logging()

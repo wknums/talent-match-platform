@@ -38,6 +38,9 @@ dev = [
     "respx>=0.21,<1",
 ]
 
+[tool.hatch.build.targets.wheel]
+packages = ["api", "db", "orchestrator", "runtime"]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 120
