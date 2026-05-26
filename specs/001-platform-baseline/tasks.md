@@ -142,6 +142,21 @@
 
 ---
 
+## Phase 8b: Azure Functions Host Packaging (Deployable v2 App)
+
+**Purpose**: Package the Durable Functions code as a deployable Azure Functions v2 application. Without these files the orchestrator/DLQ-replay code in `orchestrator/` cannot be discovered or run by the Functions host.
+
+- [x] T036a Refactor `orchestrator/functions/fanout/__init__.py` and `orchestrator/functions/dlq_replay/__init__.py` to expose `azure.functions.Blueprint` (`bp`) instead of independent `FunctionApp` instances
+- [x] T036b Create root `function_app.py` — single `FunctionApp` that registers both Blueprints (required by Python v2 programming model)
+- [x] T036c Create root `host.json` — extension bundle `[4.*, 5.0.0)`, Durable Task hub `AwrPlatformTaskHub`, App Insights sampling
+- [x] T036d Create root `requirements.txt` — Functions-host runtime dependencies (mirrors pyproject runtime subset)
+- [x] T036e Create root `local.settings.json` — local dev settings (`FUNCTIONS_WORKER_RUNTIME=python`, `EnableWorkerIndexing`)
+- [x] T036f Create root `.funcignore` — exclude `api/`, `db/`, `apim/`, `infra/`, `specs/`, `tests/`, `.venv`, etc. from the deployment package
+
+**Checkpoint**: `func start` runs locally; `func azure functionapp publish` deploys to the `functions_host` Terraform module output.
+
+---
+
 ## Phase 9: APIM Gateway Policies
 
 **Purpose**: API Management policies for rate limiting, retry, redaction, and correlation

@@ -1,55 +1,122 @@
-"""DLQ replay utility – reads dead-letter messages and re-enqueues them.
+"""Manual DLQ drain / replay for the engine SB queues.
 
-Designed to run as a timer-triggered or manually triggered Azure Function.
+Operational tool exposed as HTTP-triggered Functions. Not bound to APIM —
+intended to be called from a privileged ops context (e.g., `az functionapp
+invoke` or a `curl` with the function key).
+
+Endpoints (under `/api/dlq/`):
+
+- ``POST /api/dlq/peek/{kind}``     — read up to N messages from a DLQ
+                                       without consuming them.
+- ``POST /api/dlq/replay/{kind}``   — drain DLQ and re-publish to the main
+                                       queue. ``kind`` ∈ ``runs`` | ``results``.
+
+Both endpoints accept ``?max=10`` (default 10, capped at 100).
 """
 
-from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
 import azure.functions as func
 from azure.identity import DefaultAzureCredential
-from azure.servicebus import ServiceBusClient, ServiceBusMessage, ServiceBusReceiveMode
+from azure.servicebus import ServiceBusClient, ServiceBusMessage, ServiceBusSubQueue
 
 from runtime.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-app = func.FunctionApp()
+bp = func.Blueprint()
 
 
-@app.route(route="dlq-replay", methods=["POST"])
-def dlq_replay(req: func.HttpRequest) -> func.HttpResponse:
-    """Manually triggered DLQ replay.
-
-    Reads up to *max_messages* from the dead-letter sub-queue and re-sends them
-    to the main queue for reprocessing.
-    """
+def _resolve_queue(kind: str) -> tuple[str, str]:
     settings = get_settings()
-    max_messages = int(req.params.get("max", "10"))
-    credential = DefaultAzureCredential()
+    if kind == "runs":
+        return settings.sb_runs_queue, settings.sb_runs_dlq
+    if kind == "results":
+        return settings.sb_results_queue, settings.sb_results_dlq
+    raise ValueError(f"unknown DLQ kind: {kind!r}")
+
+
+def _sb_client() -> ServiceBusClient:
+    settings = get_settings()
+    fqns = (
+        settings.sb_namespace
+        if settings.sb_namespace.endswith(".servicebus.windows.net")
+        else f"{settings.sb_namespace}.servicebus.windows.net"
+    )
+    return ServiceBusClient(
+        fully_qualified_namespace=fqns,
+        credential=DefaultAzureCredential(),
+    )
+
+
+@bp.route(route="dlq/peek/{kind}", methods=["POST"])
+def http_dlq_peek(req: func.HttpRequest) -> func.HttpResponse:
+    kind = req.route_params.get("kind", "")
+    max_n = min(int(req.params.get("max", "10")), 100)
+    try:
+        main_queue, _ = _resolve_queue(kind)
+    except ValueError as exc:
+        return func.HttpResponse(status_code=400, body=str(exc))
+
+    peeked: list[dict[str, Any]] = []
+    with _sb_client() as sb:
+        with sb.get_queue_receiver(
+            queue_name=main_queue, sub_queue=ServiceBusSubQueue.DEAD_LETTER, max_wait_time=5
+        ) as receiver:
+            for msg in receiver.peek_messages(max_message_count=max_n):
+                peeked.append(_msg_summary(msg))
+    return func.HttpResponse(
+        body=json.dumps({"kind": kind, "peeked": peeked}),
+        status_code=200,
+        mimetype="application/json",
+    )
+
+
+@bp.route(route="dlq/replay/{kind}", methods=["POST"])
+def http_dlq_replay(req: func.HttpRequest) -> func.HttpResponse:
+    kind = req.route_params.get("kind", "")
+    max_n = min(int(req.params.get("max", "10")), 100)
+    try:
+        main_queue, _ = _resolve_queue(kind)
+    except ValueError as exc:
+        return func.HttpResponse(status_code=400, body=str(exc))
 
     replayed = 0
-    with ServiceBusClient(
-        fully_qualified_namespace=settings.sb_namespace,
-        credential=credential,
-    ) as client:
-        dlq_receiver = client.get_queue_receiver(
-            queue_name=settings.sb_queue,
-            sub_queue=ServiceBusReceiveMode.DEAD_LETTER,  # type: ignore[arg-type]
-            max_wait_time=5,
-        )
-        sender = client.get_queue_sender(queue_name=settings.sb_queue)
+    failed: list[dict[str, Any]] = []
+    with _sb_client() as sb:
+        with sb.get_queue_receiver(
+            queue_name=main_queue, sub_queue=ServiceBusSubQueue.DEAD_LETTER, max_wait_time=5
+        ) as receiver, sb.get_queue_sender(main_queue) as sender:
+            messages = receiver.receive_messages(max_message_count=max_n, max_wait_time=5)
+            for msg in messages:
+                try:
+                    body = bytes(msg).decode("utf-8") if msg.body else ""
+                    new = ServiceBusMessage(body, content_type=msg.content_type or "application/json")
+                    if msg.message_id:
+                        new.message_id = msg.message_id
+                    if msg.correlation_id:
+                        new.correlation_id = msg.correlation_id
+                    sender.send_messages(new)
+                    receiver.complete_message(msg)
+                    replayed += 1
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("DLQ replay failed for message_id=%s", msg.message_id)
+                    failed.append({"message_id": msg.message_id, "error": str(exc)})
+    return func.HttpResponse(
+        body=json.dumps({"kind": kind, "replayed": replayed, "failed": failed}),
+        status_code=200,
+        mimetype="application/json",
+    )
 
-        with dlq_receiver, sender:
-            for msg in dlq_receiver:
-                if replayed >= max_messages:
-                    break
-                body = str(msg)
-                sender.send_messages(ServiceBusMessage(body=body, content_type="application/json"))
-                dlq_receiver.complete_message(msg)
-                replayed += 1
-                logger.info("Replayed DLQ message: %s", msg.message_id)
 
-    return func.HttpResponse(f"Replayed {replayed} messages", status_code=200)
+def _msg_summary(msg: Any) -> dict[str, Any]:
+    return {
+        "message_id": msg.message_id,
+        "correlation_id": msg.correlation_id,
+        "dead_letter_reason": getattr(msg, "dead_letter_reason", None),
+        "dead_letter_error_description": getattr(msg, "dead_letter_error_description", None),
+        "enqueued_time_utc": str(getattr(msg, "enqueued_time_utc", "")),
+    }

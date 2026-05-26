@@ -57,12 +57,17 @@ awr-platform/
 │   ├── models.py                 # Pydantic request/response models + RFC 7807
 │   ├── auth.py                   # AAD JWT validation (optional)
 │   └── deps.py                   # correlationId, pagination, DI helpers
-├── orchestrator/                 # Azure Durable Functions
+├── orchestrator/                 # Azure Durable Functions (Blueprints)
 │   ├── __init__.py
 │   ├── sb_contracts.py           # Service Bus message schemas
 │   └── functions/
-│       ├── fanout/__init__.py    # Fan-out orchestrator + activity
-│       └── dlq_replay/__init__.py # DLQ replay HTTP trigger
+│       ├── fanout/__init__.py    # Fan-out orchestrator + activity (Blueprint)
+│       └── dlq_replay/__init__.py # DLQ replay HTTP trigger (Blueprint)
+├── function_app.py               # Functions v2 host entry — registers Blueprints
+├── host.json                     # Functions host config (extension bundle, Durable hub)
+├── requirements.txt              # Functions-host runtime dependencies
+├── local.settings.json           # Local Functions runtime settings
+├── .funcignore                   # Excludes from `func` deployment package
 ├── db/                           # Database layer
 │   ├── __init__.py
 │   ├── connection.py             # pyodbc + Entra token (attrs_before[1256])

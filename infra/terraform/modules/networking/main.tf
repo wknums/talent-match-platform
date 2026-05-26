@@ -34,11 +34,6 @@ variable "subnet_app_prefix" {
   default = "10.0.1.0/24"
 }
 
-variable "subnet_sql_prefix" {
-  type    = string
-  default = "10.0.2.0/24"
-}
-
 variable "subnet_apim_prefix" {
   type    = string
   default = "10.0.3.0/24"
@@ -74,14 +69,6 @@ resource "azurerm_subnet" "app" {
   }
 }
 
-resource "azurerm_subnet" "sql" {
-  count                = var.enabled ? 1 : 0
-  name                 = "snet-sql"
-  resource_group_name  = var.resource_group_name
-  virtual_network_name = azurerm_virtual_network.main[0].name
-  address_prefixes     = [var.subnet_sql_prefix]
-}
-
 resource "azurerm_subnet" "apim" {
   count                = var.enabled ? 1 : 0
   name                 = "snet-apim"
@@ -96,10 +83,6 @@ output "vnet_id" {
 
 output "app_subnet_id" {
   value = var.enabled ? azurerm_subnet.app[0].id : ""
-}
-
-output "sql_subnet_id" {
-  value = var.enabled ? azurerm_subnet.sql[0].id : ""
 }
 
 output "apim_subnet_id" {

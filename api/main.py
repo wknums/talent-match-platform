@@ -12,8 +12,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from api.routes_artifacts import router as artifacts_router
-from api.routes_runs import router as runs_router
+from api.routes_assess import router as assess_router
 from runtime.config import get_settings
 from runtime.errors import ProblemDetail, problem_response
 from runtime.telemetry import setup_telemetry
@@ -71,8 +70,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 
 # ── Routers ───────────────────────────────────────────────────────────────────
-app.include_router(runs_router, prefix="/runs", tags=["runs"])
-app.include_router(artifacts_router, tags=["artifacts"])
+app.include_router(assess_router)
 
 
 @app.get("/health", tags=["infra"])

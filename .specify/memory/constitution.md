@@ -3,24 +3,31 @@
 ## Core Principles
 
 ### I. Zero-Trust Identity (NON-NEGOTIABLE)
+
 All Azure resource access uses Microsoft Entra ID (formerly AAD) and Managed Identity exclusively. No SAS tokens, no connection strings with secrets, no key-based authentication. `DefaultAzureCredential` is the single credential provider for local dev (`az login`) and deployed workloads (system/user-assigned MI). RBAC role assignments govern all data-plane access.
 
 ### II. No Secrets in Code (NON-NEGOTIABLE)
+
 No credentials, connection strings, resource IDs, or keys are permitted in source code, Terraform modules, or CI/CD pipelines. All sensitive values live in Azure Key Vault or are injected as environment variables at deploy time. Terraform uses variables for all resource identifiers. `.env_*` files are git-ignored.
 
 ### III. Infrastructure as Terraform
+
 All Azure infrastructure is provisioned via Terraform >= 1.6 using modular compositions under `infra/terraform/`. No Azure CLI imperative provisioning in production paths. Modules support resource reuse (`reuse_*` flags) for shared enterprise resources. Remote state is stored in Azure Storage with per-environment state keys.
 
 ### IV. Test-First Development
+
 Tests are written before implementation. The `tests/` directory contains pytest-based tests covering API routes, repository idempotency, SQL transient retry, and orchestration logic. Red-Green-Refactor is the expected cycle. CI (`ci.yml`) gates all PRs on lint (ruff), type-check (mypy), and test pass.
 
 ### V. Resilient by Default
+
 All SQL operations use exponential backoff with full jitter (`runtime/transient.py`). Connections are re-opened before each retry. Only transient SQLState codes trigger retries. Service Bus consumers handle poison messages via DLQ with a replay mechanism. All operations are idempotent where possible.
 
 ### VI. Observability Everywhere
+
 OpenTelemetry tracing, structured JSON logging, and metrics are mandatory for all services. Every HTTP request carries a `correlationId`. Application Insights and Log Analytics are the observability backends. Diagnostic strings are logged when latency exceeds thresholds or unexpected status codes are returned.
 
 ### VII. Simplicity & YAGNI
+
 Start simple. No abstractions for hypothetical future requirements. No over-engineering. Features are driven by the PRD and spec documents. Complexity must be justified in writing. The right amount of code is the minimum needed for the current requirement.
 
 ## Security Requirements
@@ -35,7 +42,7 @@ Start simple. No abstractions for hypothetical future requirements. No over-engi
 ## Technology Stack
 
 | Layer | Technology | Version/Constraint |
-|-------|-----------|-------------------|
+| ----- | ---------- | ------------------ |
 | Language | Python | >= 3.11 |
 | API Framework | FastAPI + Uvicorn | Latest stable |
 | Models/Config | Pydantic v2 + pydantic-settings | >= 2.0 |
@@ -64,7 +71,31 @@ Start simple. No abstractions for hypothetical future requirements. No over-engi
 
 ## Communication Flow
 
-The following diagram is the **golden thread** connecting all solution component repositories. Every service interaction in the AWR Platform follows this sequence:
+The following golden thread is **mode-aware** and distinguishes authoritative
+state from live projections. Sequential low-volume scoring may bypass the
+platform entirely; the flow below applies to the platform-mediated high-volume
+queue-worker path.
+
+- **Business system of record**: the client repo owns persistence of batches,
+    runs, and aggregated business results in its own `talentmatch` schema.
+- **In-flight orchestration state**: the platform owns active submission state
+    in Durable Functions. `submissionId = batchId = instance_id` for the lifetime
+    of the orchestration.
+- **Operational routing state**: the platform maintains a run index that maps
+    `runId -> batchId + applicationId + runIndex` so that engine callbacks and
+    result messages can be routed back to the correct submission.
+- **Completed handoff state**: the platform persists completed batch results to
+    blob storage as `batches/{batchId}/result.json`; the client may ingest those
+    results into its own store on its own schedule.
+- **Live progress projection**: Azure SignalR may be used to push non-authoritative
+    progress, state, and asset events to subscribed clients. SignalR events are a
+    projection of authoritative platform/client state, not a replacement for it,
+    and must be reproducible from Durable state, the run index, result documents,
+    and telemetry.
+
+Every implementation must preserve end-to-end traceability across
+`submissionId`, `batchId`, `jobId`, `applicationId`, `runId`, `runIndex`,
+`correlationId`, and W3C `traceparent`.
 
 ```mermaid
 sequenceDiagram
@@ -80,44 +111,53 @@ sequenceDiagram
     participant AOAI as AOAI (Reasoning) via APIM
     participant BLOB as Blob Storage
     participant SBOUT as SB results
-    participant SQL as Azure SQL
+        participant CSQL as Client SQL (system of record)
     participant SIG as Azure SignalR
 
-    Client->>OAPI: create run
-    OAPI->>APIM: POST /runs
+        Client->>OAPI: submit batch
+        OAPI->>APIM: POST /assess/batch
     APIM->>API: forward
-    API->>SQL: insert run (Started)
-    API->>SIG: push "run started"
 
-    API->>ORCH: start orchestration
-    ORCH->>SBIN: enqueue RunMessage
-    ORCH->>SIG: push "queued"
+        API->>ORCH: start orchestration (submissionId=batchId)
+        ORCH->>BLOB: write prompt blob + run index
+        ORCH->>SBIN: enqueue RunMessage (runId, applicationId, runIndex)
+        ORCH->>SIG: push "submission queued / run dispatched" (optional)
 
     SBIN-->>WKR: deliver RunMessage
     WKR->>CORE: execute run
     CORE->>AOAI: reasoning calls (via APIM)
     CORE->>BLOB: upload artifacts
-    WKR->>SIG: push "processing progress"
 
-    WKR->>SBOUT: publish RunResultMessage
-    SBOUT-->>ORCH: deliver result
-    ORCH->>SQL: update status, timings, tokens
-    ORCH->>SIG: push "completed"
+        alt REPORT_MODE=servicebus
+                WKR->>SBOUT: publish RunResultMessage
+                SBOUT-->>ORCH: deliver result
+        else REPORT_MODE=http
+                WKR->>API: PATCH /runs/{runId}
+                API->>ORCH: raise external event for runId
+        end
 
-    Client->>OAPI: get run status
-    OAPI->>APIM: GET /runs/{id}
+        ORCH->>ORCH: update progress + aggregate by applicationId
+        ORCH->>SIG: push "run/application progress" (optional)
+        ORCH->>BLOB: write batches/{batchId}/result.json
+        ORCH->>SIG: push "batch completed" (optional)
+
+        Client->>OAPI: get batch status
+        OAPI->>APIM: GET /assess/batch/{submissionId}/status
     APIM->>API: forward
-    API-->>OAPI: status + artifact links
+        API-->>OAPI: status + per-application progress/result summary
     SIG-->>Client: live updates (optional)
+
+        Client->>CSQL: ingest completed batch/application/run results
 ```
 
 ## Governance
 
 This constitution supersedes all other development practices for the AWR Platform repository. Amendments require:
+
 1. A documented rationale in a PR description.
 2. Approval from the Platform Team lead.
 3. A migration plan for any breaking changes to existing modules.
 
 All code reviews must verify compliance. Violations must be flagged and resolved before merge.
 
-**Version**: 1.0.0 | **Ratified**: 2026-03-02 | **Last Amended**: 2026-03-02
+**Version**: 1.1.0 | **Ratified**: 2026-03-02 | **Last Amended**: 2026-05-22

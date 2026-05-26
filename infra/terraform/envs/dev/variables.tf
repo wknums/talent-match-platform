@@ -29,15 +29,6 @@ variable "use_private_endpoints" {
 }
 
 # ── SKU sizes (scaled per env) ────────────────────────────────────────────────
-variable "sql_sku" {
-  type    = string
-  default = "S0"
-}
-
-variable "sql_max_size_gb" {
-  type    = number
-  default = 2
-}
 
 variable "apim_sku" {
   type    = string
@@ -67,17 +58,14 @@ variable "sb_queue_name" {
 # ── AAD / identity ────────────────────────────────────────────────────────────
 variable "tenant_id" {
   type        = string
-  description = "Azure AD tenant ID."
-}
-
-variable "aad_admin_object_id" {
-  type        = string
-  description = "Object ID of the group/user to make SQL AAD admin."
+  description = "Azure AD tenant ID. Required only when provisioning Key Vault."
+  default     = ""
 }
 
 variable "publisher_email" {
   type        = string
-  description = "Publisher email for APIM."
+  description = "Publisher email for APIM. Required only when APIM is enabled."
+  default     = ""
 }
 
 variable "container_image" {
@@ -88,7 +76,42 @@ variable "container_image" {
 # ── Storage (optional artifacts) ──────────────────────────────────────────────
 variable "enable_artifact_storage" {
   type    = bool
+  default = true
+}
+
+variable "batch_results_retention_days" {
+  type    = number
+  default = 7
+}
+
+variable "enable_live_progress" {
+  type    = bool
   default = false
+}
+
+variable "signalr_sku" {
+  type    = string
+  default = "Standard_S1"
+}
+
+variable "signalr_capacity" {
+  type    = number
+  default = 1
+}
+
+variable "signalr_hub_name" {
+  type    = string
+  default = "batch-progress"
+}
+
+variable "live_progress_target" {
+  type    = string
+  default = "batchProgress"
+}
+
+variable "live_progress_group_prefix" {
+  type    = string
+  default = "submission"
 }
 
 variable "tags" {
@@ -115,11 +138,6 @@ variable "reuse_service_bus" {
   default = false
 }
 
-variable "reuse_sql" {
-  type    = bool
-  default = false
-}
-
 variable "reuse_key_vault" {
   type    = bool
   default = false
@@ -138,6 +156,26 @@ variable "reuse_loganalytics" {
 variable "reuse_identities" {
   type    = bool
   default = false
+}
+
+variable "reuse_core_rg" {
+  type    = bool
+  default = false
+}
+
+variable "reuse_functions_storage" {
+  type    = bool
+  default = false
+}
+
+variable "reuse_signalr" {
+  type    = bool
+  default = false
+}
+
+variable "existing_core_rg_name" {
+  type    = string
+  default = ""
 }
 
 # ── Existing Resource Details (used when reuse_* = true) ──────────────────────
@@ -165,19 +203,6 @@ variable "existing_service_bus_name" {
   default = ""
 }
 variable "existing_service_bus_rg" {
-  type    = string
-  default = ""
-}
-
-variable "existing_sql_server_name" {
-  type    = string
-  default = ""
-}
-variable "existing_sql_db_name" {
-  type    = string
-  default = ""
-}
-variable "existing_sql_rg" {
   type    = string
   default = ""
 }
@@ -220,4 +245,29 @@ variable "existing_identities_func_name" {
 variable "existing_identities_rg" {
   type    = string
   default = ""
+}
+
+variable "existing_functions_storage_name" {
+  type    = string
+  default = ""
+}
+
+variable "existing_functions_storage_rg" {
+  type    = string
+  default = ""
+}
+
+variable "existing_signalr_name" {
+  type    = string
+  default = ""
+}
+
+variable "existing_signalr_rg" {
+  type    = string
+  default = ""
+}
+
+variable "functions_deployment_container_name" {
+  type    = string
+  default = "app-package"
 }

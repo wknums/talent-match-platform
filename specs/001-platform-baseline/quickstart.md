@@ -64,6 +64,38 @@ docker build -t awr-platform-api .
 docker run -p 8000:8000 --env-file .env awr-platform-api
 ```
 
+## 5b. Run the Durable Functions locally
+
+The orchestrator (`fanout`) and DLQ replay live in the same repo as a Functions v2
+app. The host files at the repo root (`function_app.py`, `host.json`,
+`requirements.txt`, `local.settings.json`) make it deployable.
+
+Prereqs:
+- [Azure Functions Core Tools v4](https://learn.microsoft.com/azure/azure-functions/functions-run-local)
+- [Azurite](https://learn.microsoft.com/azure/storage/common/storage-use-azurite) running for `AzureWebJobsStorage=UseDevelopmentStorage=true`
+
+```bash
+# Install runtime deps into the same venv
+pip install -r requirements.txt
+
+# Start the Functions host
+func start
+
+# Trigger the fan-out orchestrator
+curl -X POST http://localhost:7071/api/orchestrate \
+  -H "Content-Type: application/json" \
+  -d '{"runs":[{"run_id":"<uuid>","engine":"demo"}]}'
+
+# Replay up to 5 dead-lettered messages
+curl -X POST "http://localhost:7071/api/dlq-replay?max=5"
+```
+
+Deploy to the Function App provisioned by `infra/terraform/modules/functions_host`:
+
+```bash
+func azure functionapp publish <function_app_name>
+```
+
 ## 6. Deploy Infrastructure
 
 ```bash

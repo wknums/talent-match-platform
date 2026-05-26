@@ -3,6 +3,7 @@
 .env.*
 .env_*
 !.env.example
+local.settings.json
 
 # ── Python ────────────────────────────────────────
 __pycache__/
@@ -20,6 +21,7 @@ venv/
 *.tfstate
 *.tfstate.*
 *.tfplan
+**/tfplan
 crash.log
 override.tf
 override.tf.json
@@ -29,6 +31,12 @@ override.tf.json
 terraform.rc
 terraform.tfvars
 !terraform.tfvars.example
+
+# ── Local Artifacts / Scratch ─────────────────────
+/-
+/.specify/memory/*.md-keep
+/released*.zip
+/tools/fake-engine/local.settings.json.example
 
 # ── IDE / OS ──────────────────────────────────────
 .vscode/

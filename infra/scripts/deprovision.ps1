@@ -109,7 +109,6 @@ function Get-EnvOrDefault([hashtable]$vars, [string]$key, [string]$default = "")
 $env:TF_VAR_reuse_storage      = (Get-BoolValue (Get-EnvOrDefault $envVars "AZ_STORAGE_REUSE")).ToString().ToLower()
 $env:TF_VAR_reuse_appinsights  = (Get-BoolValue (Get-EnvOrDefault $envVars "AZ_APPINSIGHTS_REUSE")).ToString().ToLower()
 $env:TF_VAR_reuse_service_bus  = (Get-BoolValue (Get-EnvOrDefault $envVars "AZ_SERVICE_BUS_REUSE")).ToString().ToLower()
-$env:TF_VAR_reuse_sql          = (Get-BoolValue (Get-EnvOrDefault $envVars "AZ_SQL_REUSE")).ToString().ToLower()
 $env:TF_VAR_reuse_key_vault    = (Get-BoolValue (Get-EnvOrDefault $envVars "AZ_KEY_VAULT_REUSE")).ToString().ToLower()
 $env:TF_VAR_reuse_apim         = (Get-BoolValue (Get-EnvOrDefault $envVars "AZ_APIM_REUSE")).ToString().ToLower()
 $env:TF_VAR_reuse_loganalytics = (Get-BoolValue (Get-EnvOrDefault $envVars "AZ_LOGANALYTICS_REUSE")).ToString().ToLower()
@@ -124,10 +123,6 @@ $env:TF_VAR_existing_appinsights_rg    = Get-EnvOrDefault $envVars "AZ_APPINSIGH
 
 $env:TF_VAR_existing_service_bus_name  = Get-EnvOrDefault $envVars "AZ_SERVICE_BUS_NAME"
 $env:TF_VAR_existing_service_bus_rg    = Get-EnvOrDefault $envVars "AZ_SERVICE_BUS_RG"
-
-$env:TF_VAR_existing_sql_server_name   = Get-EnvOrDefault $envVars "AZ_SQL_SERVER_NAME"
-$env:TF_VAR_existing_sql_db_name       = Get-EnvOrDefault $envVars "AZ_SQL_DB_NAME"
-$env:TF_VAR_existing_sql_rg            = Get-EnvOrDefault $envVars "AZ_SQL_RG"
 
 $env:TF_VAR_existing_key_vault_name    = Get-EnvOrDefault $envVars "AZ_KEY_VAULT_NAME"
 $env:TF_VAR_existing_key_vault_rg      = Get-EnvOrDefault $envVars "AZ_KEY_VAULT_RG"
@@ -147,7 +142,6 @@ $resources = @(
     @{ Name = "Storage Account";      EnvFlag = "AZ_STORAGE_REUSE";      TfVar = $env:TF_VAR_reuse_storage;      Module = "storage" },
     @{ Name = "Application Insights"; EnvFlag = "AZ_APPINSIGHTS_REUSE";  TfVar = $env:TF_VAR_reuse_appinsights;  Module = "application_insights" },
     @{ Name = "Service Bus";          EnvFlag = "AZ_SERVICE_BUS_REUSE";  TfVar = $env:TF_VAR_reuse_service_bus;  Module = "service_bus" },
-    @{ Name = "SQL Server + DB";      EnvFlag = "AZ_SQL_REUSE";          TfVar = $env:TF_VAR_reuse_sql;          Module = "sql" },
     @{ Name = "Key Vault";            EnvFlag = "AZ_KEY_VAULT_REUSE";    TfVar = $env:TF_VAR_reuse_key_vault;    Module = "key_vault" },
     @{ Name = "API Management";       EnvFlag = "AZ_APIM_REUSE";        TfVar = $env:TF_VAR_reuse_apim;         Module = "apim" },
     @{ Name = "Log Analytics";        EnvFlag = "AZ_LOGANALYTICS_REUSE"; TfVar = $env:TF_VAR_reuse_loganalytics; Module = "log_analytics" },

@@ -1,7 +1,7 @@
 # PRD: Azure Resource Reuse for AWR Platform Infrastructure
 
-> **Status**: Implemented  
-> **Last updated**: 2026-02-13  
+> **Status**: Implemented with known gaps  
+> **Last updated**: 2026-05-20  
 > **Owner**: Platform Team
 
 ---
@@ -49,7 +49,7 @@ When a `*_REUSE` flag is `TRUE`, the corresponding resource details must be prov
 | Storage | `AZ_STORAGE_NAME`, `AZ_STORAGE_RG` |
 | App Insights | `AZ_APPINSIGHTS_NAME`, `AZ_APPINSIGHTS_RG` |
 | Service Bus | `AZ_SERVICE_BUS_NAME`, `AZ_SERVICE_BUS_RG` |
-| SQL | `AZ_SQL_SERVER_NAME`, `AZ_SQL_DB_NAME`, `AZ_SQL_RG` |
+| SQL | `SQL_SERVER`, `SQL_DATABASE`, `SQL_RG` |
 | Key Vault | `AZ_KEY_VAULT_NAME`, `AZ_KEY_VAULT_RG` |
 | APIM | `AZ_APIM_NAME`, `AZ_APIM_RG` |
 | Log Analytics | `AZ_LOGANALYTICS_NAME`, `AZ_LOGANALYTICS_RG` |
@@ -130,9 +130,9 @@ output "id" {
 Edit `.env_qa`:
 ```ini
 AZ_SQL_REUSE=TRUE
-AZ_SQL_SERVER_NAME=sql-shared-qa
-AZ_SQL_DB_NAME=awrdb
-AZ_SQL_RG=rg-shared-platform
+SQL_SERVER=sql-shared-qa
+SQL_DATABASE=awrdb
+SQL_RG=rg-shared-platform
 
 AZ_LOGANALYTICS_REUSE=TRUE
 AZ_LOGANALYTICS_NAME=law-central-qa
@@ -239,9 +239,9 @@ The `deploy.ps1` / `deploy.sh` scripts also support `Action = destroy`, but when
 ### New Files
 | File | Purpose |
 |------|---------|
-| `.env_local` | Reuse config + runtime config for local dev |
-| `.env_qa` | Reuse config + runtime config for QA/staging |
-| `.env_prod` | Reuse config + runtime config for production |
+| `.env_local` | Intended reuse config + runtime config for local dev; not currently prepared in this repo |
+| `.env_qa` | Intended reuse config + runtime config for QA/staging |
+| `.env_prod` | Intended reuse config + runtime config for production; not currently prepared in this repo |
 | `infra/scripts/deploy.ps1` | PowerShell wrapper: .env → TF_VAR → terraform |
 | `infra/scripts/deploy.sh` | Bash wrapper: .env → TF_VAR → terraform |
 | `infra/scripts/deprovision.ps1` | PowerShell: safe destroy with reuse protection |
@@ -287,3 +287,37 @@ Each module gained `reuse`, `existing_name`, `existing_resource_group` variables
 - **Cross-subscription support**: Add optional `existing_subscription_id` for `provider` aliasing.
 - **Import support**: `terraform import` helper script for migrating from newly-created to reused resources.
 - **GitHub Actions integration**: Wire `deploy.sh` into CI workflows with environment-specific `.env` file selection.
+
+## 11. Known Gaps (2026-05-20)
+
+The current implementation intentionally does **not** add reuse support for the following resource owners:
+
+- `modules/app_host` — existing App Service / container host reuse is not implemented.
+- `modules/functions_host` — existing Function App / plan reuse is not implemented.
+- `modules/networking` — existing VNet / subnet reuse is not implemented.
+
+Additional current-state notes:
+
+- Reuse defaults now fall back to the active deployment resource group when `existing_*_rg` is omitted, and `envs/{dev,test,prod}` support reuse of the Functions runtime storage account.
+- The Function App diagnostic-setting count bug has been fixed by switching from a computed `log_analytics_workspace_id == ""` guard to an explicit boolean toggle from each environment.
+- The diagnostic setting still uses the deprecated `metric` block. This is a compatibility cleanup item, not a functional blocker.
+- The wrapper scripts reference `.env_local`, `.env_qa`, and `.env_prod`, but only `.env.example` is currently present in the repo. Local and prod env files are not yet prepared.
+- Because local/prod env files are not prepared, dev/prod were updated by static review only in this pass; they were not initialized or fully validated with Terraform commands.
+
+## 12. Validation Completed (2026-05-20)
+
+The following checks were completed during this change set:
+
+### Terraform / Reuse Validation
+
+- `terraform validate` succeeded in `infra/terraform/envs/test` after the reuse-wiring changes.
+- `terraform validate` succeeded again in `infra/terraform/envs/test` after fixing the Functions diagnostic-setting count logic.
+- `terraform fmt` was run on the touched Terraform code under `modules/functions_host` and `envs/{test,dev,prod}`.
+- Static consistency checks were completed for `envs/dev` and `envs/prod` to confirm the new reuse variables and Functions-storage reuse wiring are internally consistent without requiring `terraform init`.
+
+### Runtime Verification Completed Earlier In The Same Workstream
+
+- Missing Service Bus queues and required Function App settings were added manually in the test environment to unblock runtime verification.
+- The Functions package was rebuilt and zip-deployed to the test Function App.
+- Azure reported all 11 functions as registered after deployment.
+- `POST /api/orchestration/start` returned success, and `GET /api/orchestration/{instance_id}` returned a running orchestration state in the deployed test environment.
