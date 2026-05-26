@@ -35,6 +35,24 @@ variable "container_image" {
   default     = "ghcr.io/placeholder/awr-platform-api:latest"
 }
 
+variable "docker_registry_url" {
+  type        = string
+  description = "Registry URL for App Service container pulls, e.g. https://acrname.azurecr.io."
+  default     = ""
+}
+
+variable "docker_image_name" {
+  type        = string
+  description = "Image name including tag for App Service, e.g. awr-platform-api:qa-latest."
+  default     = ""
+}
+
+variable "acr_use_managed_identity" {
+  type        = bool
+  description = "Use the api UAMI for ACR pulls instead of admin credentials."
+  default     = false
+}
+
 variable "api_identity_id" {
   type        = string
   description = "Resource ID of the user-assigned managed identity for the API."
@@ -97,10 +115,13 @@ resource "azurerm_linux_web_app" "main" {
   }
 
   site_config {
-    always_on = true
+    always_on                                     = true
+    container_registry_use_managed_identity       = var.acr_use_managed_identity
+    container_registry_managed_identity_client_id = var.acr_use_managed_identity ? var.api_client_id : null
 
     application_stack {
-      docker_image_name   = var.container_image
+      docker_registry_url = var.docker_registry_url
+      docker_image_name   = var.docker_image_name
     }
   }
 
@@ -167,7 +188,7 @@ resource "azurerm_container_app" "main" {
 output "host_url" {
   value = var.host_choice == "webapp_container" ? (
     length(azurerm_linux_web_app.main) > 0 ? "https://${azurerm_linux_web_app.main[0].default_hostname}" : ""
-  ) : (
+    ) : (
     length(azurerm_container_app.main) > 0 ? "https://${azurerm_container_app.main[0].ingress[0].fqdn}" : ""
   )
 }
@@ -175,7 +196,7 @@ output "host_url" {
 output "host_name" {
   value = var.host_choice == "webapp_container" ? (
     length(azurerm_linux_web_app.main) > 0 ? azurerm_linux_web_app.main[0].name : ""
-  ) : (
+    ) : (
     length(azurerm_container_app.main) > 0 ? azurerm_container_app.main[0].name : ""
   )
 }

@@ -10,16 +10,12 @@ output "functions_name" {
   value = module.functions_host.function_app_name
 }
 
-output "sql_server_fqdn" {
-  value = module.sql.server_fqdn
-}
-
-output "sql_db_name" {
-  value = module.sql.database_name
-}
-
 output "service_bus_namespace" {
   value = module.service_bus.namespace_fqdn
+}
+
+output "signalr_service_endpoint" {
+  value = module.signalr.service_endpoint
 }
 
 output "api_principal_id" {

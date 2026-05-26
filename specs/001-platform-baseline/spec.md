@@ -2,8 +2,15 @@
 
 **Feature Branch**: `001-platform-baseline`  
 **Created**: 2026-03-02  
-**Status**: Implemented  
+**Status**: SUPERSEDED by [`002-platform-mode-shift`](../002-platform-mode-shift/spec.md)  
 **Input**: Platform layer — REST API, durable orchestration, Azure SQL persistence, APIM gateway, and Terraform infrastructure.
+
+> ⚠️ **Superseded.** The `/runs` + `/artifacts` API surface and the
+> platform-owned `engine.RunRecord` / `engine.Artifact` / `engine.Idempotency`
+> SQL tables described below were never deployed to a live environment and
+> have been removed from the codebase. The platform now implements the
+> `/assess/batch` contract owned by the `awr-cv-match-client` repo. See
+> [spec 002](../002-platform-mode-shift/spec.md).
 
 ## User Scenarios & Testing
 

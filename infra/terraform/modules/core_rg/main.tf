@@ -23,7 +23,26 @@ variable "tags" {
   default     = {}
 }
 
+# ── Reuse support ─────────────────────────────────────────────────────────────
+variable "reuse" {
+  type        = bool
+  description = "If true, look up an existing resource group instead of creating one."
+  default     = false
+}
+
+variable "existing_name" {
+  type        = string
+  description = "Name of the existing resource group (required when reuse = true)."
+  default     = ""
+}
+
+data "azurerm_resource_group" "existing" {
+  count = var.reuse ? 1 : 0
+  name  = var.existing_name
+}
+
 resource "azurerm_resource_group" "main" {
+  count    = var.reuse ? 0 : 1
   name     = "rg-${var.project}-${var.environment}"
   location = var.location
 
@@ -34,13 +53,13 @@ resource "azurerm_resource_group" "main" {
 }
 
 output "name" {
-  value = azurerm_resource_group.main.name
+  value = var.reuse ? data.azurerm_resource_group.existing[0].name : azurerm_resource_group.main[0].name
 }
 
 output "location" {
-  value = azurerm_resource_group.main.location
+  value = var.reuse ? data.azurerm_resource_group.existing[0].location : azurerm_resource_group.main[0].location
 }
 
 output "id" {
-  value = azurerm_resource_group.main.id
+  value = var.reuse ? data.azurerm_resource_group.existing[0].id : azurerm_resource_group.main[0].id
 }

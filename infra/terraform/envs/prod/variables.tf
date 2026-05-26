@@ -25,16 +25,6 @@ variable "use_private_endpoints" {
   default = true
 }
 
-variable "sql_sku" {
-  type    = string
-  default = "GP_S_Gen5_2"
-}
-
-variable "sql_max_size_gb" {
-  type    = number
-  default = 32
-}
-
 variable "apim_sku" {
   type    = string
   default = "Standard_1"
@@ -64,10 +54,6 @@ variable "tenant_id" {
   type = string
 }
 
-variable "aad_admin_object_id" {
-  type = string
-}
-
 variable "publisher_email" {
   type = string
 }
@@ -80,6 +66,41 @@ variable "container_image" {
 variable "enable_artifact_storage" {
   type    = bool
   default = true
+}
+
+variable "batch_results_retention_days" {
+  type    = number
+  default = 7
+}
+
+variable "enable_live_progress" {
+  type    = bool
+  default = false
+}
+
+variable "signalr_sku" {
+  type    = string
+  default = "Standard_S1"
+}
+
+variable "signalr_capacity" {
+  type    = number
+  default = 1
+}
+
+variable "signalr_hub_name" {
+  type    = string
+  default = "batch-progress"
+}
+
+variable "live_progress_target" {
+  type    = string
+  default = "batchProgress"
+}
+
+variable "live_progress_group_prefix" {
+  type    = string
+  default = "submission"
 }
 
 variable "tags" {
@@ -106,11 +127,6 @@ variable "reuse_service_bus" {
   default = false
 }
 
-variable "reuse_sql" {
-  type    = bool
-  default = false
-}
-
 variable "reuse_key_vault" {
   type    = bool
   default = false
@@ -129,6 +145,26 @@ variable "reuse_loganalytics" {
 variable "reuse_identities" {
   type    = bool
   default = false
+}
+
+variable "reuse_core_rg" {
+  type    = bool
+  default = false
+}
+
+variable "reuse_functions_storage" {
+  type    = bool
+  default = false
+}
+
+variable "reuse_signalr" {
+  type    = bool
+  default = false
+}
+
+variable "existing_core_rg_name" {
+  type    = string
+  default = ""
 }
 
 # ── Existing Resource Details (used when reuse_* = true) ──────────────────────
@@ -156,19 +192,6 @@ variable "existing_service_bus_name" {
   default = ""
 }
 variable "existing_service_bus_rg" {
-  type    = string
-  default = ""
-}
-
-variable "existing_sql_server_name" {
-  type    = string
-  default = ""
-}
-variable "existing_sql_db_name" {
-  type    = string
-  default = ""
-}
-variable "existing_sql_rg" {
   type    = string
   default = ""
 }
@@ -211,4 +234,29 @@ variable "existing_identities_func_name" {
 variable "existing_identities_rg" {
   type    = string
   default = ""
+}
+
+variable "existing_functions_storage_name" {
+  type    = string
+  default = ""
+}
+
+variable "existing_functions_storage_rg" {
+  type    = string
+  default = ""
+}
+
+variable "existing_signalr_name" {
+  type    = string
+  default = ""
+}
+
+variable "existing_signalr_rg" {
+  type    = string
+  default = ""
+}
+
+variable "functions_deployment_container_name" {
+  type    = string
+  default = "app-package"
 }

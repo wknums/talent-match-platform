@@ -62,14 +62,18 @@ variable "existing_name" {
 
 variable "existing_resource_group" {
   type        = string
-  description = "Resource group of the existing APIM instance (required when reuse = true)."
+  description = "Resource group of the existing APIM instance. Defaults to resource_group_name when omitted."
   default     = ""
+}
+
+locals {
+  existing_resource_group_name = trimspace(var.existing_resource_group) != "" ? var.existing_resource_group : var.resource_group_name
 }
 
 data "azurerm_api_management" "existing" {
   count               = var.reuse ? 1 : 0
   name                = var.existing_name
-  resource_group_name = var.existing_resource_group
+  resource_group_name = local.existing_resource_group_name
 }
 
 resource "azurerm_api_management" "main" {
@@ -100,15 +104,15 @@ resource "azurerm_api_management_product" "platform" {
 # ── API (OpenAPI import placeholder) ──────────────────────────────────────────
 
 resource "azurerm_api_management_api" "platform_api" {
-  count                 = var.reuse ? 0 : 1
-  name                  = "${var.project}-platform-api"
-  resource_group_name   = var.resource_group_name
-  api_management_name   = azurerm_api_management.main[0].name
-  revision              = "1"
-  display_name          = "AWR Platform API"
-  path                  = "platform"
-  protocols             = ["https"]
-  service_url           = var.backend_url
+  count               = var.reuse ? 0 : 1
+  name                = "${var.project}-platform-api"
+  resource_group_name = var.resource_group_name
+  api_management_name = azurerm_api_management.main[0].name
+  revision            = "1"
+  display_name        = "AWR Platform API"
+  path                = "platform"
+  protocols           = ["https"]
+  service_url         = var.backend_url
   subscription_key_parameter_names {
     header = "Ocp-Apim-Subscription-Key"
     query  = "subscription-key"

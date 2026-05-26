@@ -1,8 +1,5 @@
 terraform {
-  backend "azurerm" {
-    resource_group_name  = "rg-awr-tfstate"
-    storage_account_name = "awrtfstate"          # TODO: replace after bootstrap
-    container_name       = "tfstate"
-    key                  = "test.terraform.tfstate"
-  }
+  # Local backend for QA smoke deploy. Switch to azurerm backend once the
+  # shared tfstate storage account is bootstrapped in this subscription.
+  backend "local" {}
 }

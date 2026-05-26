@@ -65,9 +65,13 @@ fi
 # ── Parse .env file ───────────────────────────────────────────────────────────
 declare -A ENV_VARS
 while IFS='=' read -r key value; do
-    key=$(echo "$key" | xargs)
-    value=$(echo "$value" | xargs)
-    [[ -z "$key" || "$key" == \#* ]] && continue
+    [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
+    key="${key//[[:space:]]/}"
+    [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] && continue
+    value="${value%$'\r'}"
+    value="${value%%#*}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
     ENV_VARS["$key"]="$value"
 done < "$ENV_FILE_PATH"
 
@@ -80,7 +84,6 @@ to_bool() { [[ "${1^^}" == "TRUE" ]] && echo "true" || echo "false"; }
 export TF_VAR_reuse_storage=$(to_bool "$(get_env AZ_STORAGE_REUSE FALSE)")
 export TF_VAR_reuse_appinsights=$(to_bool "$(get_env AZ_APPINSIGHTS_REUSE FALSE)")
 export TF_VAR_reuse_service_bus=$(to_bool "$(get_env AZ_SERVICE_BUS_REUSE FALSE)")
-export TF_VAR_reuse_sql=$(to_bool "$(get_env AZ_SQL_REUSE FALSE)")
 export TF_VAR_reuse_key_vault=$(to_bool "$(get_env AZ_KEY_VAULT_REUSE FALSE)")
 export TF_VAR_reuse_apim=$(to_bool "$(get_env AZ_APIM_REUSE FALSE)")
 export TF_VAR_reuse_loganalytics=$(to_bool "$(get_env AZ_LOGANALYTICS_REUSE FALSE)")
@@ -95,10 +98,6 @@ export TF_VAR_existing_appinsights_rg="$(get_env AZ_APPINSIGHTS_RG '')"
 
 export TF_VAR_existing_service_bus_name="$(get_env AZ_SERVICE_BUS_NAME '')"
 export TF_VAR_existing_service_bus_rg="$(get_env AZ_SERVICE_BUS_RG '')"
-
-export TF_VAR_existing_sql_server_name="$(get_env AZ_SQL_SERVER_NAME '')"
-export TF_VAR_existing_sql_db_name="$(get_env AZ_SQL_DB_NAME '')"
-export TF_VAR_existing_sql_rg="$(get_env AZ_SQL_RG '')"
 
 export TF_VAR_existing_key_vault_name="$(get_env AZ_KEY_VAULT_NAME '')"
 export TF_VAR_existing_key_vault_rg="$(get_env AZ_KEY_VAULT_RG '')"
@@ -115,9 +114,9 @@ export TF_VAR_existing_identities_rg="$(get_env AZ_IDENTITIES_RG '')"
 
 # ── Build resource disposition ────────────────────────────────────────────────
 # Reusable resources  (name, env_flag_prefix, tf_var_value)
-declare -a RESOURCE_NAMES=("Storage Account" "Application Insights" "Service Bus" "SQL Server + DB" "Key Vault" "API Management" "Log Analytics" "Managed Identities")
-declare -a RESOURCE_FLAGS=("AZ_STORAGE" "AZ_APPINSIGHTS" "AZ_SERVICE_BUS" "AZ_SQL" "AZ_KEY_VAULT" "AZ_APIM" "AZ_LOGANALYTICS" "AZ_IDENTITIES")
-declare -a RESOURCE_TF_VALS=("$TF_VAR_reuse_storage" "$TF_VAR_reuse_appinsights" "$TF_VAR_reuse_service_bus" "$TF_VAR_reuse_sql" "$TF_VAR_reuse_key_vault" "$TF_VAR_reuse_apim" "$TF_VAR_reuse_loganalytics" "$TF_VAR_reuse_identities")
+declare -a RESOURCE_NAMES=("Storage Account" "Application Insights" "Service Bus" "Key Vault" "API Management" "Log Analytics" "Managed Identities")
+declare -a RESOURCE_FLAGS=("AZ_STORAGE" "AZ_APPINSIGHTS" "AZ_SERVICE_BUS" "AZ_KEY_VAULT" "AZ_APIM" "AZ_LOGANALYTICS" "AZ_IDENTITIES")
+declare -a RESOURCE_TF_VALS=("$TF_VAR_reuse_storage" "$TF_VAR_reuse_appinsights" "$TF_VAR_reuse_service_bus" "$TF_VAR_reuse_key_vault" "$TF_VAR_reuse_apim" "$TF_VAR_reuse_loganalytics" "$TF_VAR_reuse_identities")
 
 # Always-managed modules
 declare -a ALWAYS_MANAGED=("Resource Group" "Networking (VNet)" "App Service (API)" "Functions Host")

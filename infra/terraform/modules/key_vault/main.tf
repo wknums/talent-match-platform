@@ -47,14 +47,18 @@ variable "existing_name" {
 
 variable "existing_resource_group" {
   type        = string
-  description = "Resource group of the existing Key Vault (required when reuse = true)."
+  description = "Resource group of the existing Key Vault. Defaults to resource_group_name when omitted."
   default     = ""
+}
+
+locals {
+  existing_resource_group_name = trimspace(var.existing_resource_group) != "" ? var.existing_resource_group : var.resource_group_name
 }
 
 data "azurerm_key_vault" "existing" {
   count               = var.reuse ? 1 : 0
   name                = var.existing_name
-  resource_group_name = var.existing_resource_group
+  resource_group_name = local.existing_resource_group_name
 }
 
 resource "azurerm_key_vault" "main" {

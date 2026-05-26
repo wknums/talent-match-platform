@@ -43,20 +43,24 @@ variable "existing_functions_name" {
 
 variable "existing_resource_group" {
   type        = string
-  description = "Resource group of the existing identities (required when reuse = true)."
+  description = "Resource group of the existing identities. Defaults to resource_group_name when omitted."
   default     = ""
+}
+
+locals {
+  existing_resource_group_name = trimspace(var.existing_resource_group) != "" ? var.existing_resource_group : var.resource_group_name
 }
 
 data "azurerm_user_assigned_identity" "existing_api" {
   count               = var.reuse ? 1 : 0
   name                = var.existing_api_name
-  resource_group_name = var.existing_resource_group
+  resource_group_name = local.existing_resource_group_name
 }
 
 data "azurerm_user_assigned_identity" "existing_functions" {
   count               = var.reuse ? 1 : 0
   name                = var.existing_functions_name
-  resource_group_name = var.existing_resource_group
+  resource_group_name = local.existing_resource_group_name
 }
 
 resource "azurerm_user_assigned_identity" "api" {

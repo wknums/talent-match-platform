@@ -21,6 +21,7 @@ from api.models import (
     RunStatus,
 )
 from db.connection import get_connection
+from db.schema import qualify
 from runtime.transient import with_sql_retry
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,11 @@ def _utcnow() -> datetime:
 
 
 class RunRepository:
-    """Data-access object for engine.RunRecord, engine.Artifact, engine.Idempotency."""
+    """Data-access object for RunRecord, Artifact, Idempotency tables.
+
+    Table names are qualified at call time via ``db.schema.qualify`` so the
+    schema can be configured via ``DB_SCHEMA`` env var.
+    """
 
     # ── Idempotency ───────────────────────────────────────────────────────────
 
@@ -42,7 +47,7 @@ class RunRepository:
         try:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT * FROM engine.RunRecord WHERE idempotency_key = ?",
+                f"SELECT * FROM {qualify('RunRecord')} WHERE idempotency_key = ?",
                 (idempotency_key,),
             )
             row = cursor.fetchone()
@@ -69,8 +74,8 @@ class RunRepository:
         try:
             cursor = conn.cursor()
             cursor.execute(
-                """
-                INSERT INTO engine.RunRecord
+                f"""
+                INSERT INTO {qualify('RunRecord')}
                     (id, idempotency_key, engine, status, parameters, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
@@ -108,8 +113,8 @@ class RunRepository:
         try:
             cursor = conn.cursor()
             cursor.execute(
-                """
-                UPDATE engine.RunRecord
+                f"""
+                UPDATE {qualify('RunRecord')}
                 SET status = ?, duration_ms = ?, tokens_prompt = ?,
                     tokens_completion = ?, error_message = ?, updated_at = ?
                 WHERE id = ?
@@ -117,7 +122,7 @@ class RunRepository:
                 (status.value, duration_ms, tokens_prompt, tokens_completion, error_message, now, str(run_id)),
             )
             conn.commit()
-            cursor.execute("SELECT * FROM engine.RunRecord WHERE id = ?", (str(run_id),))
+            cursor.execute(f"SELECT * FROM {qualify('RunRecord')} WHERE id = ?", (str(run_id),))
             row = cursor.fetchone()
         finally:
             conn.close()
@@ -139,8 +144,8 @@ class RunRepository:
             for item in items:
                 artifact_id = uuid.uuid4()
                 cursor.execute(
-                    """
-                    INSERT INTO engine.Artifact
+                    f"""
+                    INSERT INTO {qualify('Artifact')}
                         (id, run_id, name, uri, content_type, size_bytes, metadata, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
@@ -179,7 +184,7 @@ class RunRepository:
         conn = get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM engine.RunRecord WHERE id = ?", (str(run_id),))
+            cursor.execute(f"SELECT * FROM {qualify('RunRecord')} WHERE id = ?", (str(run_id),))
             row = cursor.fetchone()
             return self._row_to_run(row) if row else None
         finally:
@@ -211,12 +216,12 @@ class RunRepository:
             where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
             # Total count
-            cursor.execute(f"SELECT COUNT(*) FROM engine.RunRecord{where_sql}", params)
+            cursor.execute(f"SELECT COUNT(*) FROM {qualify('RunRecord')}{where_sql}", params)
             total: int = cursor.fetchone()[0]
 
             # Page
             cursor.execute(
-                f"SELECT * FROM engine.RunRecord{where_sql} ORDER BY created_at DESC OFFSET ? ROWS FETCH NEXT ? ROWS ONLY",
+                f"SELECT * FROM {qualify('RunRecord')}{where_sql} ORDER BY created_at DESC OFFSET ? ROWS FETCH NEXT ? ROWS ONLY",
                 [*params, offset, limit],
             )
             rows = cursor.fetchall()
@@ -231,7 +236,7 @@ class RunRepository:
     def _row_to_run(row: Any) -> RunResponse:
         """Map a pyodbc Row to a RunResponse model.
 
-        Column order must match the engine.RunRecord table:
+        Column order must match the RunRecord table:
             id, idempotency_key, engine, status, parameters,
             duration_ms, tokens_prompt, tokens_completion,
             error_message, created_at, updated_at

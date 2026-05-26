@@ -28,12 +28,23 @@ if [[ ! -d "$TF_DIR" ]]; then
   exit 1
 fi
 
+# ── Regenerate terraform.tfvars from the env file (single source of truth) ────
+if [[ -x "$REPO_ROOT/infra/scripts/generate-tfvars.sh" ]]; then
+  "$REPO_ROOT/infra/scripts/generate-tfvars.sh" "$ENV_FILE" "$TF_ENV"
+fi
+
 # ── Parse .env file ───────────────────────────────────────────────────────────
 declare -A ENV_VARS
 while IFS='=' read -r key value; do
-  key=$(echo "$key" | xargs)
-  value=$(echo "$value" | xargs)
-  [[ -z "$key" || "$key" == \#* ]] && continue
+  # Skip blanks and comments BEFORE any quote-sensitive trimming.
+  [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
+  key="${key//[[:space:]]/}"
+  # Only accept valid shell-style identifiers.
+  [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] && continue
+  value="${value%$'\r'}"
+  value="${value%%#*}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
   ENV_VARS["$key"]="$value"
 done < "$ENV_FILE_PATH"
 
@@ -46,11 +57,12 @@ to_bool() { [[ "${1^^}" == "TRUE" ]] && echo "true" || echo "false"; }
 export TF_VAR_reuse_storage=$(to_bool "$(get_env AZ_STORAGE_REUSE FALSE)")
 export TF_VAR_reuse_appinsights=$(to_bool "$(get_env AZ_APPINSIGHTS_REUSE FALSE)")
 export TF_VAR_reuse_service_bus=$(to_bool "$(get_env AZ_SERVICE_BUS_REUSE FALSE)")
-export TF_VAR_reuse_sql=$(to_bool "$(get_env AZ_SQL_REUSE FALSE)")
 export TF_VAR_reuse_key_vault=$(to_bool "$(get_env AZ_KEY_VAULT_REUSE FALSE)")
 export TF_VAR_reuse_apim=$(to_bool "$(get_env AZ_APIM_REUSE FALSE)")
 export TF_VAR_reuse_loganalytics=$(to_bool "$(get_env AZ_LOGANALYTICS_REUSE FALSE)")
 export TF_VAR_reuse_identities=$(to_bool "$(get_env AZ_IDENTITIES_REUSE FALSE)")
+export TF_VAR_reuse_core_rg=$(to_bool "$(get_env AZ_CORE_RG_REUSE FALSE)")
+export TF_VAR_existing_core_rg_name="$(get_env AZ_CORE_RG_NAME '')"
 
 # Existing resource details
 export TF_VAR_existing_storage_name="$(get_env AZ_STORAGE_NAME '')"
@@ -61,10 +73,6 @@ export TF_VAR_existing_appinsights_rg="$(get_env AZ_APPINSIGHTS_RG '')"
 
 export TF_VAR_existing_service_bus_name="$(get_env AZ_SERVICE_BUS_NAME '')"
 export TF_VAR_existing_service_bus_rg="$(get_env AZ_SERVICE_BUS_RG '')"
-
-export TF_VAR_existing_sql_server_name="$(get_env AZ_SQL_SERVER_NAME '')"
-export TF_VAR_existing_sql_db_name="$(get_env AZ_SQL_DB_NAME '')"
-export TF_VAR_existing_sql_rg="$(get_env AZ_SQL_RG '')"
 
 export TF_VAR_existing_key_vault_name="$(get_env AZ_KEY_VAULT_NAME '')"
 export TF_VAR_existing_key_vault_rg="$(get_env AZ_KEY_VAULT_RG '')"
@@ -79,6 +87,12 @@ export TF_VAR_existing_identities_api_name="$(get_env AZ_IDENTITIES_API_NAME '')
 export TF_VAR_existing_identities_func_name="$(get_env AZ_IDENTITIES_FUNC_NAME '')"
 export TF_VAR_existing_identities_rg="$(get_env AZ_IDENTITIES_RG '')"
 
+# Feature toggles
+export TF_VAR_enable_apim=$(to_bool "$(get_env AZ_APIM_ENABLED FALSE)")
+export TF_VAR_enable_acr_pull=$(to_bool "$(get_env AZ_ACR_REUSE FALSE)")
+export TF_VAR_existing_acr_name="$(get_env AZ_ACR_NAME '')"
+export TF_VAR_existing_acr_rg="$(get_env AZ_ACR_RG '')"
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "═══════════════════════════════════════════════════════════"
@@ -89,7 +103,7 @@ echo "  TF Env   : $TF_ENV"
 echo "  Action   : $ACTION"
 echo ""
 echo "  Resource Reuse:"
-for r in storage appinsights service_bus sql key_vault apim loganalytics identities; do
+for r in storage appinsights service_bus key_vault apim loganalytics identities; do
   var="TF_VAR_reuse_$r"
   val="${!var}"
   if [[ "$val" == "true" ]]; then
@@ -117,7 +131,7 @@ if [[ "$ACTION" == "destroy" ]]; then
     # Show abbreviated reuse protection status
     echo -e "\033[0;32m  PROTECTED (will NOT be destroyed):\033[0m"
     has_destroy_protected=false
-    for r in storage appinsights service_bus sql key_vault apim loganalytics identities; do
+    for r in storage appinsights service_bus key_vault apim loganalytics identities; do
         var="TF_VAR_reuse_$r"
         val="${!var}"
         if [[ "$val" == "true" ]]; then
@@ -130,7 +144,7 @@ if [[ "$ACTION" == "destroy" ]]; then
     fi
 
     echo -e "\033[0;31m  WILL DESTROY:\033[0m"
-    for r in storage appinsights service_bus sql key_vault apim loganalytics identities; do
+    for r in storage appinsights service_bus key_vault apim loganalytics identities; do
         var="TF_VAR_reuse_$r"
         val="${!var}"
         if [[ "$val" != "true" ]]; then
