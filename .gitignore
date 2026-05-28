@@ -40,6 +40,8 @@ terraform.tfvars
 /released*.zip
 /scripts/stage-cv-with-temp-access.sh
 /tools/fake-engine/local.settings.json.example
+PATCH_SUMMARY.md
+tests/realdata/
 
 # ── IDE / OS ──────────────────────────────────────
 .vscode/
