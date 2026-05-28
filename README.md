@@ -53,7 +53,7 @@ Optional live projection:
 | **API** | FastAPI + Uvicorn | `POST /assess/batch`, `GET /assess/batch/{id}/status`, `POST /assess/batch/{id}/cancel` |
 | **Orchestrator** | Azure Durable Functions | Fan-out, progress state, result intake, aggregation, blob persistence |
 | **Dispatch transport** | Azure Service Bus | `engine-runs` dispatch and `engine-results` callbacks |
-| **Persistence** | Durable Task Hub + Blob Storage | No platform-owned SQL; client repo owns `talentmatch` |
+| **Persistence** | Durable Task Hub + Blob Storage | Durable state, run-index blobs, and terminal result materialization |
 | **Storage** | Azure Blob Storage | `cv-uploads/`, `run-index/`, `result-delivery/`, `batches/{batchId}/result.json` |
 | **Live progress** | Azure SignalR (optional) | Non-authoritative progress events with polling fallback |
 | **Gateway** | Azure API Management | Rate limiting, retry, redaction, correlation-id |
@@ -96,6 +96,7 @@ awr-platform/
 │   ├── config.py            # pydantic-settings
 │   ├── telemetry.py         # OpenTelemetry setup
 │   ├── events.py            # live progress event payloads + SignalR publish
+│   ├── aggregation/         # shared aggregation profiles and reducers
 │   └── errors.py            # RFC 7807 problem+json
 ├── apim/                    # APIM policies (XML)
 ├── docs/                    # operator + usage + testing docs
@@ -104,7 +105,7 @@ awr-platform/
 │   ├── modules/             # Reusable Terraform modules
 │   └── envs/{dev,test,prod} # Environment compositions
 ├── tests/                   # Pytest test suite
-├── .github/workflows/       # CI/CD pipelines
+├── .github/workflows/       # workflow definitions (currently empty)
 ├── Dockerfile
 ├── function_app.py          # Functions host entry
 ├── host.json
@@ -172,6 +173,36 @@ python -m pytest tests -v
 Use the editable install from `pip install -e ".[dev]"` so the repo packages,
 `pytest-asyncio`, and the async test configuration are all available. For the
 test matrix and focused commands, see [docs/testing.md](docs/testing.md).
+
+### Integration and E2E tests
+
+The repo includes opt-in live integration tests against a deployed environment:
+
+- [tests/test_e2e_real_engine_aggregation.py](tests/test_e2e_real_engine_aggregation.py) — single-CV live real-engine aggregation validation
+- [tests/test_e2e_real_engine_3cv_prompt4.py](tests/test_e2e_real_engine_3cv_prompt4.py) — stages three PDFs from [tests/realdata](tests/realdata) and validates terminal aggregation
+
+Shared aggregation logic is also validated with:
+
+- [tests/test_shared_aggregation.py](tests/test_shared_aggregation.py) — profile-based aggregation behavior for CV and generic payloads
+
+Run the core E2E test:
+
+```bash
+RUN_REAL_ENGINE_E2E=true \
+REAL_ENGINE_E2E_BASE_URL=https://<apim-host>/awr \
+REAL_ENGINE_E2E_CV_BLOB_URI=https://<storage-account>.blob.core.windows.net/cv-uploads/<path>/cv.pdf \
+REAL_ENGINE_E2E_CV_SHA256=<64-char-hex> \
+python -m pytest tests/test_e2e_real_engine_aggregation.py -v
+```
+
+Run the 3-CV prompt4 E2E test:
+
+```bash
+RUN_REAL_ENGINE_E2E=true \
+REAL_ENGINE_E2E_BASE_URL=https://<apim-host>/awr \
+REAL_ENGINE_E2E_STORAGE_ACCOUNT=<storage-account> \
+python -m pytest tests/test_e2e_real_engine_3cv_prompt4.py -v
+```
 
 ---
 
@@ -346,67 +377,19 @@ terraform destroy -var-file=terraform.tfvars
 | `host_choice` | `webapp_container` / `container_apps` | API hosting model |
 | `use_private_endpoints` | `true` / `false` | Enable VNet + private endpoints |
 | `enable_artifact_storage` | `true` / `false` | Provision blob storage for artifacts |
-| `sql_sku` | e.g. `S0`, `GP_S_Gen5_2` | SQL Database SKU |
 | `apim_sku` | e.g. `Developer_1`, `Standard_1` | APIM tier |
 
 ---
 
 ## CI/CD – GitHub Actions with OIDC
 
-All workflows use **OIDC-based federation** to Azure — no client secrets stored in GitHub.
+This repository currently does not ship active workflow YAML files under `.github/workflows`.
 
-### Setup OIDC Federation
+When enabling CI/CD for this repo, prefer OIDC-based federation to Azure (no static client secrets), and split pipeline stages into:
 
-1. Create an Azure AD App Registration for GitHub Actions.
-2. Add a Federated Credential for your repo (`repo:<org>/<repo>:ref:refs/heads/main` and `pull_request`).
-3. Set GitHub repository secrets:
-   - `AZURE_CLIENT_ID` — App registration client ID
-   - `AZURE_TENANT_ID` — Azure AD tenant ID
-   - `AZURE_SUBSCRIPTION_ID` — Target subscription
-4. Create GitHub Environments (`dev`, `test`, `prod`) with required reviewers for `prod`.
-
-### Workflows
-
-| Workflow | Trigger | Purpose |
-| -------- | ------- | ------- |
-| `ci.yml` | Push/PR to main | Lint, type-check, test, Docker build |
-| `codeql.yml` | Push/PR + weekly | CodeQL security analysis |
-| `terraform-plan.yml` | PR/push (infra changes) | Plan for dev/test matrix |
-| `terraform-apply.yml` | Manual dispatch | Apply with environment approvals |
-| `publish-api.yml` | Push (api changes) / manual | Build & deploy API container |
-| `publish-functions.yml` | Push (orchestrator changes) / manual | Deploy Azure Functions |
-| `run-migrations.yml` | After terraform-apply / manual | Alembic upgrade head |
-
----
-
-## Alembic Migrations
-
-### Create a new migration
-
-```bash
-alembic revision -m "add_some_column"
-# Edit the generated file in db/migrations/versions/
-```
-
-### Apply migrations
-
-```bash
-# Locally (uses DefaultAzureCredential via az login)
-alembic upgrade head
-
-# In CI: the run-migrations.yml workflow handles this automatically
-# after terraform-apply, using OIDC → federated token → pyodbc attrs_before[1256].
-```
-
-### How token-based auth works
-
-The Alembic `env.py` and `db/connection.py` both:
-
-1. Call `DefaultAzureCredential().get_token("https://database.windows.net/.default")`
-2. Encode the token as UTF-16-LE with a length prefix
-3. Pass it via `pyodbc.connect(..., attrs_before={1256: token_struct})`
-
-No username or password is ever stored or transmitted.
+1. test and lint validation
+2. Terraform plan/apply with environment approvals
+3. API and Functions deployment
 
 ---
 
@@ -430,22 +413,20 @@ az servicebus queue show --namespace-name <service-bus-namespace> --name engine-
 | Resource | Setting | Where |
 | -------- | ------- | ----- |
 | API throughput | App Service Plan SKU / ACA CPU+memory | `app_service_sku` or ACA template |
-| SQL compute | DTU or vCore SKU | `sql_sku` variable |
 | Service Bus | Standard → Premium (partitioning, larger messages) | `service_bus_sku` |
 | Functions | Consumption → Premium (VNet, always-ready) | `functions_sku` |
 | APIM | Developer → Standard/Premium | `apim_sku` |
 
 ### Transient Retry Policy
 
-SQL operations use exponential backoff with full jitter:
+Platform retries rely on Service Bus delivery semantics, Durable Functions replay, and HTTP client retry/backoff behavior where configured.
+
+General retry expectations:
 
 - Base delay: 500 ms (doubles each attempt)
 - Max delay: 60 s
 - Max retries: 6
-- **Connection is re-opened before each retry** (stale connections are discarded)
-- Only transient SQLState codes trigger retries (e.g., `40613`, `40197`, `08S01`)
-
-Configure via environment variables: `SQL_MAX_RETRIES`, `SQL_BASE_DELAY_MS`, `SQL_MAX_DELAY_MS`.
+- Retry only transient transport or dependency failures
 
 ---
 
@@ -455,7 +436,7 @@ Configure via environment variables: `SQL_MAX_RETRIES`, `SQL_BASE_DELAY_MS`, `SQ
 - **Key Vault** stores any configuration secrets; accessed via MI.
 - **AAD JWT** enforcement is optional (`AUTH_REQUIRED=true`).
 - **APIM** provides rate limiting, subscription keys, and header redaction.
-- **Private endpoints** can be toggled for SQL and APIM in production.
+- **Private endpoints** can be toggled for storage, Service Bus, and APIM in production.
 
 ---
 
