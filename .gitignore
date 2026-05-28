@@ -42,6 +42,7 @@ terraform.tfvars
 /tools/fake-engine/local.settings.json.example
 PATCH_SUMMARY.md
 tests/realdata/
+tmp/
 
 # ── IDE / OS ──────────────────────────────────────
 .vscode/
