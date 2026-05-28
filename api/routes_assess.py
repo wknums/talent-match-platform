@@ -68,6 +68,8 @@ async def submit_batch(
             title="Idempotency conflict",
             detail="A different submission already exists for this batchId.",
         ) from exc
+    except durable_client.DurableClientError as exc:
+        raise ProblemDetail(status=502, title="Upstream error", detail=str(exc)) from exc
 
     return BatchSubmitResponse(
         submission_id=submission_id,
@@ -159,6 +161,24 @@ def _to_status_response(submission_id: str, raw: dict[str, Any]) -> BatchStatusR
     result = None
     if raw.get("result"):
         cvs = [CvResult(**cv) for cv in raw["result"].get("cvs", [])]
+        if raw.get("status") == "completed":
+            for cv in cvs:
+                if cv.aggregated is None:
+                    raise ProblemDetail(
+                        status=502,
+                        title="Upstream contract error",
+                        detail="Completed result missing aggregated block.",
+                    )
+                if (
+                    cv.aggregated.final_score is None
+                    or cv.aggregated.final_decision is None
+                    or cv.aggregated.must_have_result is None
+                ):
+                    raise ProblemDetail(
+                        status=502,
+                        title="Upstream contract error",
+                        detail="Completed result missing required aggregate fields.",
+                    )
         result = BatchResult(cvs=cvs)
 
     error = None

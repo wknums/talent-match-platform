@@ -26,6 +26,42 @@ _events_built = _meter.create_counter("awr.live_progress.events_built")
 _events_projected = _meter.create_counter("awr.live_progress.events_projected")
 
 
+def extract_trace_metadata(
+    *,
+    headers: dict[str, Any] | None = None,
+    application_properties: dict[str, Any] | None = None,
+    payload: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    """Extract correlation id and traceparent from known ingress carriers."""
+    headers = headers or {}
+    application_properties = application_properties or {}
+    payload = payload or {}
+
+    correlation_id = (
+        headers.get("x-correlation-id")
+        or headers.get("X-Correlation-Id")
+        or application_properties.get("correlationId")
+        or application_properties.get(b"correlationId")
+        or payload.get("correlation_id")
+        or payload.get("correlationId")
+        or ""
+    )
+    traceparent = (
+        headers.get("traceparent")
+        or application_properties.get("traceparent")
+        or application_properties.get(b"traceparent")
+        or payload.get("traceparent")
+        or payload.get("traceParent")
+        or ""
+    )
+
+    if isinstance(correlation_id, bytes):
+        correlation_id = correlation_id.decode("utf-8", errors="ignore")
+    if isinstance(traceparent, bytes):
+        traceparent = traceparent.decode("utf-8", errors="ignore")
+    return str(correlation_id), str(traceparent)
+
+
 def build_live_progress_event(
     *,
     event_type: str,

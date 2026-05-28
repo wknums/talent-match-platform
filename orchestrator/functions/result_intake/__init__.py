@@ -18,13 +18,15 @@ from typing import Any
 import azure.durable_functions as df  # type: ignore[import-untyped]
 import azure.functions as func
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
-from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient
 from opentelemetry import trace as _otel_trace
 from opentelemetry.trace import Link, SpanContext, TraceFlags
 
+from orchestrator.engine_contracts import normalize_completion_payload
 from orchestrator.sb_contracts import FinishRunRequest, RunResultMessage
 from runtime.config import get_settings
+from runtime.events import extract_trace_metadata
+from runtime.telemetry import log_lifecycle_event
 
 logger = logging.getLogger(__name__)
 _tracer = _otel_trace.get_tracer(__name__)
@@ -40,12 +42,13 @@ bp = df.Blueprint()
 )
 @bp.durable_client_input(client_name="client")
 async def sb_result_handler(
-    msg: func.ServiceBusMessage,
-    client: df.DurableOrchestrationClient,
-) -> None:
+    msg,
+    client,
+):
     body = msg.get_body().decode("utf-8")
     try:
-        result = RunResultMessage.model_validate_json(body)
+        normalized_body = normalize_completion_payload(body)
+        result = RunResultMessage.model_validate(normalized_body)
     except Exception:
         logger.exception("invalid RunResultMessage body; dead-lettering by exception")
         raise
@@ -56,7 +59,10 @@ async def sb_result_handler(
         return  # ack and drop; not our message
 
     app_props = getattr(msg, "application_properties", None) or {}
-    traceparent = _coerce_str(app_props.get("traceparent") or app_props.get(b"traceparent"))
+    _, traceparent = extract_trace_metadata(
+        application_properties=app_props,
+        payload=result.model_dump(mode="json"),
+    )
     if not _claim_result_delivery(
         batch_id=batch_id,
         run_id=result.run_id,
@@ -72,6 +78,14 @@ async def sb_result_handler(
         span.set_attribute("awr.batch_id", batch_id)
         span.set_attribute("awr.correlation_id", result.correlation_id or "")
         span.set_attribute("awr.run.status", result.status)
+        log_lifecycle_event(
+            stage="result_intake.sb",
+            status=result.status,
+            batch_id=batch_id,
+            run_id=result.run_id,
+            correlation_id=result.correlation_id or "",
+            traceparent=traceparent,
+        )
 
         event_payload = result.model_dump(mode="json")
         if traceparent:
@@ -88,9 +102,9 @@ async def sb_result_handler(
 @bp.route(route="runs/{run_id}", methods=["PATCH"])
 @bp.durable_client_input(client_name="client")
 async def http_patch_run(
-    req: func.HttpRequest,
-    client: df.DurableOrchestrationClient,
-) -> func.HttpResponse:
+    req,
+    client,
+):
     run_id = req.route_params.get("run_id", "")
     if not run_id:
         return func.HttpResponse(status_code=400, body="run_id required")
@@ -101,7 +115,12 @@ async def http_patch_run(
         return func.HttpResponse(status_code=400, body="invalid json")
 
     try:
-        finish = FinishRunRequest.model_validate(body)
+        normalized_body = normalize_completion_payload(body)
+    except (TypeError, ValueError):
+        return func.HttpResponse(status_code=400, body="invalid json")
+
+    try:
+        finish = FinishRunRequest.model_validate(normalized_body)
     except Exception as exc:
         return func.HttpResponse(status_code=400, body=f"invalid FinishRunRequest: {exc}")
 
@@ -109,8 +128,10 @@ async def http_patch_run(
     if batch_id is None:
         return func.HttpResponse(status_code=404, body="unknown run_id")
 
-    correlation_id = req.headers.get("x-correlation-id", "")
-    traceparent = req.headers.get("traceparent", "")
+    correlation_id, traceparent = extract_trace_metadata(
+        headers=dict(req.headers),
+        payload=normalized_body,
+    )
     if not _claim_result_delivery(
         batch_id=batch_id,
         run_id=run_id,
@@ -126,6 +147,14 @@ async def http_patch_run(
         span.set_attribute("awr.batch_id", batch_id)
         span.set_attribute("awr.correlation_id", correlation_id)
         span.set_attribute("awr.run.status", finish.status)
+        log_lifecycle_event(
+            stage="result_intake.http",
+            status=finish.status,
+            batch_id=batch_id,
+            run_id=run_id,
+            correlation_id=correlation_id,
+            traceparent=traceparent,
+        )
 
         # Shape the FinishRunRequest into the RunResultMessage shape consumed by
         # the orchestrator's finalize step.
@@ -210,6 +239,8 @@ def _lookup_batch_id(run_id: str) -> str | None:
         account if account.startswith("https://")
         else f"https://{account}.blob.core.windows.net"
     )
+    from azure.identity import DefaultAzureCredential
+
     svc = BlobServiceClient(account_url=url, credential=DefaultAzureCredential())
     blob = svc.get_blob_client(container=container, blob=f"run-index/{run_id}.json")
     try:
@@ -243,6 +274,8 @@ def _claim_result_delivery(
         return True
 
     url = account if account.startswith("https://") else f"https://{account}.blob.core.windows.net"
+    from azure.identity import DefaultAzureCredential
+
     svc = BlobServiceClient(account_url=url, credential=DefaultAzureCredential())
     blob = svc.get_blob_client(container=container, blob=f"result-delivery/{run_id}.json")
     marker = json.dumps(

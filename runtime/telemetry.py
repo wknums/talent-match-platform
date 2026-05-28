@@ -6,12 +6,34 @@ import logging
 from typing import Any
 
 from opentelemetry import trace
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # type: ignore[import-untyped]
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 logger = logging.getLogger(__name__)
+
+
+def log_lifecycle_event(
+    *,
+    stage: str,
+    status: str,
+    batch_id: str = "",
+    run_id: str = "",
+    application_id: str = "",
+    correlation_id: str = "",
+    traceparent: str = "",
+) -> None:
+    """Emit a structured, trace-aware lifecycle log event."""
+    logger.info(
+        "lifecycle stage=%s status=%s batch_id=%s run_id=%s application_id=%s correlation_id=%s traceparent=%s",
+        stage,
+        status,
+        batch_id,
+        run_id,
+        application_id,
+        correlation_id,
+        traceparent,
+    )
 
 
 def setup_telemetry(*, service_name: str, otlp_endpoint: str) -> None:
@@ -50,8 +72,13 @@ def setup_telemetry(*, service_name: str, otlp_endpoint: str) -> None:
 
     trace.set_tracer_provider(provider)
 
-    # Instrument FastAPI (auto-injects span context on each request)
-    FastAPIInstrumentor().instrument()
+    # Instrument FastAPI if optional package is present.
+    try:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # type: ignore[import-untyped]
+
+        FastAPIInstrumentor().instrument()
+    except ImportError:
+        logger.debug("opentelemetry-instrumentation-fastapi not installed; skipping FastAPI instrumentation")
 
     # Configure structured JSON logging
     _configure_json_logging()

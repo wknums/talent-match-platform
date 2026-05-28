@@ -20,7 +20,6 @@ import logging
 from typing import Any
 
 import azure.functions as func
-from azure.identity import DefaultAzureCredential
 from azure.servicebus import ServiceBusClient, ServiceBusMessage, ServiceBusSubQueue
 
 from runtime.config import get_settings
@@ -40,6 +39,8 @@ def _resolve_queue(kind: str) -> tuple[str, str]:
 
 
 def _sb_client() -> ServiceBusClient:
+    from azure.identity import DefaultAzureCredential
+
     settings = get_settings()
     fqns = (
         settings.sb_namespace
@@ -53,7 +54,7 @@ def _sb_client() -> ServiceBusClient:
 
 
 @bp.route(route="dlq/peek/{kind}", methods=["POST"])
-def http_dlq_peek(req: func.HttpRequest) -> func.HttpResponse:
+def http_dlq_peek(req):
     kind = req.route_params.get("kind", "")
     max_n = min(int(req.params.get("max", "10")), 100)
     try:
@@ -76,7 +77,7 @@ def http_dlq_peek(req: func.HttpRequest) -> func.HttpResponse:
 
 
 @bp.route(route="dlq/replay/{kind}", methods=["POST"])
-def http_dlq_replay(req: func.HttpRequest) -> func.HttpResponse:
+def http_dlq_replay(req):
     kind = req.route_params.get("kind", "")
     max_n = min(int(req.params.get("max", "10")), 100)
     try:
@@ -94,11 +95,25 @@ def http_dlq_replay(req: func.HttpRequest) -> func.HttpResponse:
             for msg in messages:
                 try:
                     body = bytes(msg).decode("utf-8") if msg.body else ""
+                    if kind == "results":
+                        parsed = _parse_json_payload(body)
+                        if not parsed.get("run_id") or not parsed.get("status"):
+                            receiver.complete_message(msg)
+                            failed.append(
+                                {
+                                    "message_id": msg.message_id,
+                                    "error": "poison message missing run_id/status",
+                                }
+                            )
+                            continue
+
                     new = ServiceBusMessage(body, content_type=msg.content_type or "application/json")
                     if msg.message_id:
                         new.message_id = msg.message_id
                     if msg.correlation_id:
                         new.correlation_id = msg.correlation_id
+                    if getattr(msg, "application_properties", None):
+                        new.application_properties = dict(msg.application_properties)  # type: ignore[assignment]
                     sender.send_messages(new)
                     receiver.complete_message(msg)
                     replayed += 1
@@ -120,3 +135,11 @@ def _msg_summary(msg: Any) -> dict[str, Any]:
         "dead_letter_error_description": getattr(msg, "dead_letter_error_description", None),
         "enqueued_time_utc": str(getattr(msg, "enqueued_time_utc", "")),
     }
+
+
+def _parse_json_payload(body: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}

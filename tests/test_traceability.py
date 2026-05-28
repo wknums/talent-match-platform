@@ -109,7 +109,11 @@ def test_status_blob_fallback_preserves_traceability_after_durable_purge(client:
                         ],
                     }
                 ],
-                "aggregated": None,
+                "aggregated": {
+                    "finalScore": 7.0,
+                    "finalDecision": "Approve",
+                    "mustHaveResult": True,
+                },
                 "error": None,
             }
         ]

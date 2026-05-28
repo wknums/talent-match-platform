@@ -63,16 +63,20 @@ async def start_batch(
     headers: dict[str, str] = {"x-correlation-id": correlation_id}
     if traceparent:
         headers["traceparent"] = traceparent
-    async with _client() as http:
-        resp = await http.post(
-            "/api/orchestration/start",
-            json={"instance_id": instance_id, "payload": payload},
-            headers=headers,
-        )
-        if resp.status_code == 409:
-            raise OrchestrationConflictError(resp.status_code, resp.text)
-        if resp.status_code >= 400:
-            raise DurableClientError(resp.status_code, resp.text)
+    try:
+        async with _client() as http:
+            resp = await http.post(
+                "/api/orchestration/start",
+                json={"instance_id": instance_id, "payload": payload},
+                headers=headers,
+            )
+            if resp.status_code == 409:
+                raise OrchestrationConflictError(resp.status_code, resp.text)
+            if resp.status_code >= 400:
+                raise DurableClientError(resp.status_code, resp.text)
+    except (httpx.HTTPError, ValueError) as exc:
+        # Transport/config failures must surface as upstream errors, not 500s.
+        raise DurableClientError(502, str(exc)) from exc
 
 
 async def get_batch_status(*, instance_id: str) -> dict[str, Any]:

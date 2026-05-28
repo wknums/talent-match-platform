@@ -120,6 +120,35 @@ async def test_http_patch_run_raises_event(settings) -> None:
 
 
 @pytest.mark.asyncio
+async def test_http_patch_run_accepts_stringified_json_with_alias_fields(settings) -> None:
+    req = MagicMock()
+    req.route_params = {"run_id": "r1"}
+    req.headers = {"x-correlation-id": "cid-1"}
+    req.get_json.return_value = json.dumps(
+        {
+            "status": "Succeeded",
+            "durationMs": 1234,
+            "tokensPrompt": 100,
+            "tokensCompletion": 50,
+            "errorMessage": None,
+            "artifacts": None,
+        }
+    )
+    client = MagicMock()
+    client.raise_event = AsyncMock()
+
+    with patch.object(result_intake, "_lookup_batch_id", return_value="b1"), \
+         patch.object(result_intake, "_claim_result_delivery", return_value=True):
+        resp = await _http_patch_run(req, client=client)
+
+    assert resp.status_code == 202
+    args, _ = client.raise_event.call_args
+    assert args[2]["duration_ms"] == 1234
+    assert args[2]["tokens_prompt"] == 100
+    assert args[2]["tokens_completion"] == 50
+
+
+@pytest.mark.asyncio
 async def test_http_patch_run_unknown_run_returns_404(settings) -> None:
     req = MagicMock()
     req.route_params = {"run_id": "r-missing"}

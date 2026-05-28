@@ -85,6 +85,61 @@ def test_aggregate_accepts_alternate_field_names() -> None:
     assert agg["mustHaveResult"] is True
 
 
+def test_aggregate_handles_insufficient_information_output() -> None:
+    outputs = {
+        "uri-1": {
+            "status": "insufficient_information",
+            "score": None,
+            "decision": "cannot_assess",
+            "criteria_assessment": [],
+        },
+    }
+    with patch.object(fanout, "_read_output_artifact", side_effect=lambda arts: outputs[arts[0]["blob_uri"]]):
+        agg = fanout._aggregate([_run("Succeeded", "uri-1", 0)])
+    assert agg is not None
+    assert agg["finalScore"] == 0.0
+    assert agg["finalDecision"] == "Reject"
+    assert agg["mustHaveResult"] is False
+    assert agg["runsCount"] == 1
+
+
+def test_aggregate_accepts_real_prompt_schema_fields() -> None:
+    outputs = {
+        "uri-1": {
+            "eligibility": {
+                "status": "Not eligible",
+                "requirements_checklist": {
+                    "ReqA": {"met": False},
+                    "ReqB": {"met": True},
+                },
+            },
+            "composite_score": {"value": 84.0},
+        },
+    }
+    with patch.object(fanout, "_read_output_artifact", side_effect=lambda arts: outputs[arts[0]["blob_uri"]]):
+        agg = fanout._aggregate([_run("Succeeded", "uri-1", 0)])
+    assert agg is not None
+    assert agg["finalScore"] == 84.0
+    assert agg["finalDecision"] == "Reject"
+    assert agg["mustHaveResult"] is False
+    assert agg["runsCount"] == 1
+
+
+def test_aggregate_keeps_score_null_when_payload_has_no_score_or_status_signal() -> None:
+    outputs = {
+        "uri-1": {
+            "must_haves": [{"met": False}],
+            "decision": "reject",
+        },
+    }
+    with patch.object(fanout, "_read_output_artifact", side_effect=lambda arts: outputs[arts[0]["blob_uri"]]):
+        agg = fanout._aggregate([_run("Succeeded", "uri-1", 0)])
+    assert agg is not None
+    assert agg["finalScore"] is None
+    assert agg["finalDecision"] == "Reject"
+    assert agg["mustHaveResult"] is False
+
+
 def test_aggregate_skips_runs_with_unreadable_output() -> None:
     with patch.object(fanout, "_read_output_artifact", return_value=None):
         agg = fanout._aggregate([_run("Succeeded", "uri-1", 0)])
@@ -109,6 +164,33 @@ def test_read_output_artifact_downloads_and_parses() -> None:
             [{"name": "output.json", "blob_uri": "https://x/y/output.json"}]
         )
     assert out == {"overall_score": 7.5, "must_haves": [{"met": True}]}
+
+
+def test_read_output_artifact_falls_back_to_any_json_artifact() -> None:
+    blob = MagicMock()
+    blob.download_blob.return_value.readall.return_value = json.dumps(
+        {"overall_score": 6.9, "must_haves": [{"met": True}]}
+    ).encode("utf-8")
+    with patch("orchestrator.functions.fanout.BlobClient") as bc:
+        bc.from_blob_url.return_value = blob
+        out = fanout._read_output_artifact(
+            [{"name": "cv-analysis.json", "blob_uri": "https://x/y/cv-analysis.json"}]
+        )
+    assert out == {"overall_score": 6.9, "must_haves": [{"met": True}]}
+
+
+def test_read_output_artifact_parses_json_with_trailing_text() -> None:
+    blob = MagicMock()
+    blob.download_blob.return_value.readall.return_value = (
+        b'{"overall_score": 8.4, "must_haves": [{"met": true}], "decision": "approve"}\n\n'
+        b'This trailing narrative should be ignored by parser.'
+    )
+    with patch("orchestrator.functions.fanout.BlobClient") as bc:
+        bc.from_blob_url.return_value = blob
+        out = fanout._read_output_artifact(
+            [{"name": "output.json", "blob_uri": "https://x/y/output.json"}]
+        )
+    assert out == {"overall_score": 8.4, "must_haves": [{"met": True}], "decision": "approve"}
 
 
 def test_read_output_artifact_swallows_download_errors() -> None:
