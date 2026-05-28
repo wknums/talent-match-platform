@@ -152,3 +152,52 @@ def test_record_run_result_updates_counters_artifacts_and_application_completion
     assert app["runsCompleted"] == 2
     assert app["lastUpdatedAt"] == "2026-05-22T10:04:00+00:00"
     assert app["runs"][1]["errorMessage"] == "engine timeout"
+
+
+def test_duplicate_terminal_run_result_is_ignored() -> None:
+    progress = fanout._build_initial_progress(  # type: ignore[attr-defined]
+        batch_id="batch-1",
+        job_id="job-1",
+        cvs=_sample_cvs()[:1],
+        run_count=1,
+        updated_at="2026-05-22T10:00:00+00:00",
+    )
+    run_id = progress["applications"][0]["runs"][0]["runId"]
+
+    fanout._record_dispatched_run(  # type: ignore[attr-defined]
+        progress,
+        run_id=run_id,
+        updated_at="2026-05-22T10:01:00+00:00",
+    )
+    fanout._record_run_result(  # type: ignore[attr-defined]
+        progress,
+        run_result={
+            "run_id": run_id,
+            "status": "Succeeded",
+            "duration_ms": 100,
+            "tokens_prompt": 1,
+            "tokens_completion": 1,
+            "artifacts": None,
+            "error_message": None,
+        },
+        updated_at="2026-05-22T10:02:00+00:00",
+    )
+
+    fanout._record_run_result(  # type: ignore[attr-defined]
+        progress,
+        run_result={
+            "run_id": run_id,
+            "status": "Failed",
+            "duration_ms": 999,
+            "tokens_prompt": 9,
+            "tokens_completion": 9,
+            "artifacts": [{"name": "duplicate.json"}],
+            "error_message": "duplicate should be ignored",
+        },
+        updated_at="2026-05-22T10:03:00+00:00",
+    )
+
+    run = progress["applications"][0]["runs"][0]
+    assert progress["runsCompleted"] == 1
+    assert run["status"] == "Succeeded"
+    assert run["errorMessage"] is None

@@ -149,6 +149,19 @@ include:
 - `traceparent`
 - artifact names, URIs, and hashes when artifacts are involved
 
+## Operator Trace Verification Workflow
+
+Use this checklist during QA validation to prove end-to-end trace continuity:
+
+1. Capture `submissionId`, `x-correlation-id`, and `traceparent` at submit time.
+2. Retrieve `GET /assess/batch/{submissionId}/status` until terminal.
+3. For each `result.cvs[].runs[]` entry verify:
+   - `runId` is present
+   - `correlationId` matches submit-time value (or known deterministic transformation)
+   - `traceparent` is present and W3C formatted (`00-<trace-id>-<span-id>-<flags>`)
+4. Confirm each run artifact in final evidence maps to the same `applicationId` and `documentId` lineage.
+5. If mismatch occurs, inspect run-index and result-delivery blob markers for the run to identify routing/source breakage.
+
 ## Failure and Recovery Workflow
 
 ### Durable History Purged

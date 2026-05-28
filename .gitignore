@@ -20,6 +20,8 @@ venv/
 **/.terraform/
 *.tfstate
 *.tfstate.*
+infra/terraform/envs/test/terraform.tfstate
+infra/terraform/envs/test/terraform.tfstate.backup
 *.tfplan
 **/tfplan
 crash.log
@@ -36,6 +38,7 @@ terraform.tfvars
 /-
 /.specify/memory/*.md-keep
 /released*.zip
+/scripts/stage-cv-with-temp-access.sh
 /tools/fake-engine/local.settings.json.example
 
 # ── IDE / OS ──────────────────────────────────────
@@ -45,6 +48,8 @@ terraform.tfvars
 *.swo
 Thumbs.db
 .DS_Store
+*.tmp
+*.log
 
 # ── Docker ────────────────────────────────────────
 docker-compose.override.yml

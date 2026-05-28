@@ -90,6 +90,7 @@ class RunResultMessage(BaseModel):
     tokens_completion: int
     error_message: Optional[str] = None
     correlation_id: str
+    traceparent: Optional[str] = None
     artifacts: Optional[List[ArtifactItem]] = None
 
 
@@ -103,4 +104,6 @@ class FinishRunRequest(BaseModel):
     tokens_prompt: int
     tokens_completion: int
     error_message: Optional[str] = None
+    correlation_id: Optional[str] = None
+    traceparent: Optional[str] = None
     artifacts: Optional[List[ArtifactItem]] = None

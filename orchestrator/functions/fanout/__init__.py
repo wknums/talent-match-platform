@@ -24,7 +24,6 @@ queue-worker wrapper consuming ``engine-runs`` and reporting back via
 
 import json
 import logging
-import statistics
 import hashlib
 import uuid
 from collections import defaultdict
@@ -33,7 +32,6 @@ from typing import Any
 
 import azure.durable_functions as df  # type: ignore[import-untyped]
 import azure.functions as func
-from azure.identity import DefaultAzureCredential
 from azure.servicebus import ServiceBusClient, ServiceBusMessage
 from azure.storage.blob import BlobClient, BlobServiceClient
 
@@ -45,6 +43,8 @@ from orchestrator.engine_contracts import (
 from orchestrator.sb_contracts import RunMessage, RunParameters
 from runtime.config import get_settings
 from runtime.events import build_live_progress_event, project_live_progress_event
+from runtime.aggregation import AGGREGATION_PROFILE_CV, aggregate_run_outputs
+from runtime.telemetry import log_lifecycle_event
 
 logger = logging.getLogger(__name__)
 
@@ -141,20 +141,35 @@ def _record_run_result(
 
     application, run = match
     was_terminal = _is_terminal_run_status(run.get("status"))
+    if was_terminal:
+        logger.info("duplicate terminal run result ignored run_id=%s", run_id)
+        return
+
     artifacts = run_result.get("artifacts") or []
     run["status"] = run_result.get("status")
     run["durationMs"] = run_result.get("duration_ms")
     run["tokensPrompt"] = run_result.get("tokens_prompt")
     run["tokensCompletion"] = run_result.get("tokens_completion")
+    run["correlationId"] = run_result.get("correlation_id")
+    run["traceparent"] = run_result.get("traceparent")
     run["artifacts"] = artifacts
     run["artifactCount"] = len(artifacts)
     run["artifactNames"] = [artifact.get("name") for artifact in artifacts if artifact.get("name")]
     run["errorMessage"] = run_result.get("error_message")
     run["completedAt"] = updated_at
 
-    if not was_terminal:
-        progress["runsCompleted"] += 1
-        application["runsCompleted"] += 1
+    progress["runsCompleted"] += 1
+    application["runsCompleted"] += 1
+
+    log_lifecycle_event(
+        stage="orchestrator.run_result",
+        status=str(run_result.get("status") or ""),
+        batch_id=str(progress.get("batchId") or ""),
+        run_id=str(run_id),
+        application_id=str(application.get("applicationId") or ""),
+        correlation_id=str(run_result.get("correlation_id") or ""),
+        traceparent=str(run_result.get("traceparent") or ""),
+    )
 
     application["status"] = _summarize_application_status(application["runs"])
     application["lastUpdatedAt"] = updated_at
@@ -317,6 +332,24 @@ def _build_batch_state_live_event(
     )
 
 
+def _coerce_run_result_payload(value: Any) -> dict[str, Any]:
+    """Normalize external event payload to a dict.
+
+    Durable external events can arrive as already-decoded dicts or JSON strings
+    depending on transport/runtime serialization behavior.
+    """
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("run result payload is not valid JSON") from exc
+        if isinstance(parsed, dict):
+            return parsed
+    raise TypeError("run result payload must be a dict")
+
+
 def _terminal_run_event_type(status: Any) -> str:
     status_key = _status_key(status)
     if status_key == "failed":
@@ -461,7 +494,7 @@ def batch_orchestrator(context):
     while pending_events:
         completed_event = yield context.task_any(pending_events)
         pending_events = [task for task in pending_events if task != completed_event]
-        run_result = completed_event.result
+        run_result = _coerce_run_result_payload(completed_event.result)
         run_results.append(run_result)
         occurred_at = context.current_utc_datetime.isoformat()
         _record_run_result(
@@ -533,7 +566,7 @@ def batch_orchestrator(context):
 
 # ── Activity: stage the inline prompt to blob ────────────────────────────────
 @bp.activity_trigger(input_name="payload")
-def prepare_prompt_blob(payload) -> str:
+def prepare_prompt_blob(payload):
     settings = get_settings()
     batch_id = payload["batch_id"]
     prompt_text: str = payload["prompt_text"] or ""
@@ -634,6 +667,8 @@ def finalize_batch(payload):
                 "durationMs": r.get("duration_ms"),
                 "tokensPrompt": r.get("tokens_prompt"),
                 "tokensCompletion": r.get("tokens_completion"),
+                "correlationId": r.get("correlation_id"),
+                "traceparent": r.get("traceparent"),
                 "artifacts": r.get("artifacts"),
                 "errorMessage": r.get("error_message"),
             }
@@ -691,63 +726,81 @@ def _aggregate(runs: list[dict[str, Any]]) -> dict[str, Any] | None:
     if not succeeded:
         return None
 
-    parsed: list[dict[str, Any]] = []
+    outputs: list[dict[str, Any]] = []
+    source_artifacts: list[dict[str, Any]] = []
     for r in succeeded:
         out = _read_output_artifact(r.get("artifacts") or [])
-        if out is None:
-            continue
-        score = out.get("overall_score", out.get("score"))
-        must_haves = out.get("must_haves", out.get("must_have_results", []) or [])
-        must_all_met = bool(must_haves) and all(bool(m.get("met")) for m in must_haves)
-        if score is None and not must_haves:
-            continue
-        parsed.append({
-            "score": float(score) if isinstance(score, (int, float)) else None,
-            "must_all_met": must_all_met,
-            "decision": "Approve" if must_all_met else "Reject",
-        })
+        if out is not None:
+            outputs.append(out)
+        for artifact in r.get("artifacts") or []:
+            if isinstance(artifact, dict):
+                source_artifacts.append(
+                    {
+                        "name": artifact.get("name"),
+                        "blob_uri": artifact.get("blob_uri"),
+                        "sha256": artifact.get("sha256"),
+                    }
+                )
 
-    if not parsed:
-        return None
-
-    scores = [p["score"] for p in parsed if isinstance(p["score"], (int, float))]
-    final_score = statistics.median(scores) if scores else None
-    variance = statistics.pvariance(scores) if len(scores) > 1 else 0.0
-    decisions = [p["decision"] for p in parsed]
-    decision = max(set(decisions), key=decisions.count) if decisions else None
-    must_have = all(p["must_all_met"] for p in parsed)
-    return {
-        "finalScore": final_score,
-        "variance": variance,
-        "finalDecision": decision,
-        "mustHaveResult": must_have,
-        "runsCount": len(parsed),
-    }
+    return aggregate_run_outputs(
+        outputs,
+        profile=AGGREGATION_PROFILE_CV,
+        method="median",
+        source_artifacts=source_artifacts,
+    )
 
 
 def _read_output_artifact(artifacts: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Download and parse the engine's ``output.json`` artifact for a run."""
+    """Download and parse the engine output artifact for a run.
+
+    Prefers ``output.json`` for strict contract alignment and falls back to the
+    first JSON artifact with a blob URI for compatibility.
+    """
     item = next(
-        (a for a in artifacts if isinstance(a, dict) and a.get("name") == "output.json"),
+        (
+            a
+            for a in artifacts
+            if isinstance(a, dict)
+            and a.get("name") == "output.json"
+            and a.get("blob_uri")
+        ),
         None,
     )
+    if item is None:
+        item = next(
+            (
+                a
+                for a in artifacts
+                if isinstance(a, dict)
+                and isinstance(a.get("name"), str)
+                and a["name"].lower().endswith(".json")
+                and a.get("blob_uri")
+            ),
+            None,
+        )
     if item is None or not item.get("blob_uri"):
         return None
     try:
+        from azure.identity import DefaultAzureCredential
+
         client = BlobClient.from_blob_url(item["blob_uri"], credential=DefaultAzureCredential())
         data = client.download_blob().readall()
-        parsed = json.loads(data)
+        text = data.decode("utf-8", errors="replace") if isinstance(data, (bytes, bytearray)) else str(data)
+        # Some engine payloads append explanatory prose after a valid JSON object.
+        # Parse only the first JSON value so aggregation still works.
+        decoder = json.JSONDecoder()
+        parsed, _ = decoder.raw_decode(text.lstrip())
         return parsed if isinstance(parsed, dict) else None
     except Exception:  # noqa: BLE001 — best-effort aggregation
         logger.exception("failed to read output artifact at %s", item.get("blob_uri"))
         return None
-
-
 def _verify_input_blob_sha256(*, blob_uri: str, expected_sha256: str) -> None:
     if not expected_sha256:
         return
 
     try:
+        from azure.identity import DefaultAzureCredential
+
         client = BlobClient.from_blob_url(blob_uri, credential=DefaultAzureCredential())
         downloader = client.download_blob()
         digest = hashlib.sha256()
@@ -764,6 +817,8 @@ def _verify_input_blob_sha256(*, blob_uri: str, expected_sha256: str) -> None:
 
 # ── Helpers: blob + service bus (sync clients run in activity threads) ───────
 def _blob_service_client(account: str) -> BlobServiceClient:
+    from azure.identity import DefaultAzureCredential
+
     url = (
         account if account.startswith("https://")
         else f"https://{account}.blob.core.windows.net"
@@ -800,6 +855,8 @@ def _send_run_message(
     correlation_id: str,
     application_properties: dict[str, str] | None = None,
 ) -> None:
+    from azure.identity import DefaultAzureCredential
+
     fqns = namespace if namespace.endswith(".servicebus.windows.net") else f"{namespace}.servicebus.windows.net"
     credential = DefaultAzureCredential()
     with ServiceBusClient(fully_qualified_namespace=fqns, credential=credential) as sb:
@@ -815,7 +872,7 @@ def _send_run_message(
 # ── Internal HTTP routes (FastAPI → Functions host) ──────────────────────────
 @bp.route(route="orchestration/start", methods=["POST"])
 @bp.durable_client_input(client_name="client")
-async def http_start(req: func.HttpRequest, client) -> func.HttpResponse:
+async def http_start(req, client):
     try:
         body = req.get_json()
     except ValueError:
@@ -838,7 +895,7 @@ async def http_start(req: func.HttpRequest, client) -> func.HttpResponse:
         payload = merged
 
     existing = await client.get_status(instance_id)
-    if existing is not None:
+    if _status_exists(existing):
         return func.HttpResponse(
             status_code=200,
             body=json.dumps({"instance_id": instance_id}),
@@ -855,10 +912,10 @@ async def http_start(req: func.HttpRequest, client) -> func.HttpResponse:
 
 @bp.route(route="orchestration/{instance_id}", methods=["GET"])
 @bp.durable_client_input(client_name="client")
-async def http_status(req: func.HttpRequest, client) -> func.HttpResponse:
+async def http_status(req, client):
     instance_id = req.route_params.get("instance_id", "")
     status_obj = await client.get_status(instance_id, show_input=False)
-    if status_obj is None:
+    if not _status_exists(status_obj):
         # Durable history may have been purged. Tell FastAPI to fall back to blob.
         return func.HttpResponse(status_code=404)
 
@@ -870,10 +927,10 @@ async def http_status(req: func.HttpRequest, client) -> func.HttpResponse:
 
 @bp.route(route="orchestration/{instance_id}/terminate", methods=["POST"])
 @bp.durable_client_input(client_name="client")
-async def http_terminate(req: func.HttpRequest, client) -> func.HttpResponse:
+async def http_terminate(req, client):
     instance_id = req.route_params.get("instance_id", "")
     status_obj = await client.get_status(instance_id)
-    if status_obj is None:
+    if not _status_exists(status_obj):
         return func.HttpResponse(status_code=404)
 
     headers = getattr(req, "headers", {}) or {}
@@ -960,3 +1017,27 @@ def _normalize_status(s: Any) -> dict[str, Any]:
         "error": error,
         "retryAfterSeconds": 10 if status_str in ("queued", "running") else None,
     }
+
+
+def _status_exists(status_obj: Any) -> bool:
+    """Return True only when Durable returned a materialized orchestration instance.
+
+    Some Durable SDK/runtime combinations can return a placeholder status object
+    for unknown instance IDs. Those placeholders typically have no timestamps,
+    no function name, and no custom status.
+    """
+    if status_obj is None:
+        return False
+
+    runtime_status = getattr(status_obj, "runtime_status", None)
+    created_time = getattr(status_obj, "created_time", None)
+    last_updated_time = getattr(status_obj, "last_updated_time", None)
+    name = getattr(status_obj, "name", None)
+    custom_status = getattr(status_obj, "custom_status", None)
+    output = getattr(status_obj, "output", None)
+
+    if runtime_status is None and created_time is None and last_updated_time is None:
+        return False
+    if created_time is None and last_updated_time is None and not name:
+        return bool(custom_status or output)
+    return True

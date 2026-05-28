@@ -82,14 +82,34 @@ class BatchProgress(BaseModel):
     applications: list[dict[str, Any]] | None = None
 
 
+class RunEvidence(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    run_id: str = Field(..., alias="runId")
+    run_index: int = Field(..., alias="runIndex", ge=0)
+    status: str
+    document_id: str | None = Field(default=None, alias="documentId")
+    correlation_id: str | None = Field(default=None, alias="correlationId")
+    traceparent: str | None = None
+    artifacts: list[dict[str, Any]] | None = None
+
+
+class AggregatedOutcome(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    final_score: float | None = Field(default=None, alias="finalScore")
+    final_decision: str | None = Field(default=None, alias="finalDecision")
+    must_have_result: bool | None = Field(default=None, alias="mustHaveResult")
+
+
 class CvResult(BaseModel):
     """Per-CV result block returned when batch completes."""
 
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 
     application_id: str = Field(..., alias="applicationId")
-    runs: list[dict[str, Any]]
-    aggregated: dict[str, Any] | None = None
+    runs: list[RunEvidence]
+    aggregated: AggregatedOutcome | None = None
     error: dict[str, Any] | None = None
 
 

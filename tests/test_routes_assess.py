@@ -91,6 +91,19 @@ def test_submit_batch_conflict_maps_to_409(client: TestClient) -> None:
     assert r.status_code == 409
 
 
+def test_submit_batch_upstream_error_maps_to_502(client: TestClient) -> None:
+    from api import durable_client
+
+    body = _sample_body()
+    bid = body["batchId"]
+    with patch("api.routes_assess.durable_client.start_batch") as m:
+        m.side_effect = durable_client.DurableClientError(502, "functions down")
+        r = client.post("/assess/batch", json=body, headers={"Idempotency-Key": bid})
+    assert r.status_code == 502
+    js = r.json()
+    assert js["title"] == "Upstream error"
+
+
 # ── GET /assess/batch/{id}/status ────────────────────────────────────────────
 def test_status_running_passthrough(client: TestClient) -> None:
     bid = str(uuid.uuid4())
@@ -146,7 +159,26 @@ def test_status_404_falls_back_to_blob(client: TestClient) -> None:
     bid = str(uuid.uuid4())
     from api import durable_client
 
-    blob_result = {"cvs": [{"applicationId": "a", "runs": [], "aggregated": None, "error": None}]}
+    blob_result = {
+        "cvs": [
+            {
+                "applicationId": "a",
+                "runs": [
+                    {
+                        "runId": "run-1",
+                        "runIndex": 0,
+                        "status": "Succeeded",
+                    }
+                ],
+                "aggregated": {
+                    "finalScore": 7.5,
+                    "finalDecision": "Approve",
+                    "mustHaveResult": True,
+                },
+                "error": None,
+            }
+        ]
+    }
     with patch("api.routes_assess.durable_client.get_batch_status") as gs, \
          patch("api.routes_assess.durable_client.read_batch_result_from_blob") as rb:
         gs.side_effect = durable_client.DurableClientError(404, "not found")
@@ -168,6 +200,29 @@ def test_status_404_without_blob_returns_404(client: TestClient) -> None:
         rb.return_value = None
         r = client.get(f"/assess/batch/{bid}/status")
     assert r.status_code == 404
+
+
+def test_completed_status_missing_required_aggregate_fields_returns_502(client: TestClient) -> None:
+    bid = str(uuid.uuid4())
+    with patch("api.routes_assess.durable_client.get_batch_status") as m:
+        m.return_value = {
+            "status": "completed",
+            "progress": None,
+            "result": {
+                "cvs": [
+                    {
+                        "applicationId": "app-1",
+                        "runs": [{"runId": "run-1", "runIndex": 0, "status": "Succeeded"}],
+                        "aggregated": {"finalScore": 7.5, "finalDecision": None, "mustHaveResult": True},
+                        "error": None,
+                    }
+                ]
+            },
+            "error": None,
+            "retryAfterSeconds": None,
+        }
+        r = client.get(f"/assess/batch/{bid}/status")
+    assert r.status_code == 502
 
 
 # ── POST /assess/batch/{id}/cancel ───────────────────────────────────────────

@@ -7,6 +7,7 @@ the FastAPI layer, the orchestrator, and its activities.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -53,3 +54,36 @@ class FinalizeBatchInput(BaseModel):
     batch_id: str
     cvs: list[dict[str, Any]]
     run_results: list[dict[str, Any]]
+
+
+def normalize_completion_payload(payload: Any) -> dict[str, Any]:
+    """Normalize completion payloads from HTTP/SB into a canonical dict.
+
+    Supports dict payloads, JSON strings, and UTF-8 encoded bytes. Common
+    field aliases are normalized to snake_case used by internal contracts.
+    """
+    value: Any = payload
+    if isinstance(value, bytes):
+        value = value.decode("utf-8")
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("completion payload is not valid JSON") from exc
+    if not isinstance(value, dict):
+        raise TypeError("completion payload must be a JSON object")
+
+    normalized = dict(value)
+    aliases = {
+        "runId": "run_id",
+        "durationMs": "duration_ms",
+        "tokensPrompt": "tokens_prompt",
+        "tokensCompletion": "tokens_completion",
+        "errorMessage": "error_message",
+        "correlationId": "correlation_id",
+        "traceParent": "traceparent",
+    }
+    for source, target in aliases.items():
+        if source in normalized and target not in normalized:
+            normalized[target] = normalized[source]
+    return normalized
